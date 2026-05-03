@@ -1,4 +1,4 @@
-# BorrowEase — CSIT226 Final Output Increment 1
+# HUWAM 
 ### Ligaray & Pacina — BSCS 2 F1
 
 ---
