@@ -3,13 +3,13 @@
 
 ---
 
-## 📋 Project Overview
+##  Project Overview
 
-BorrowEase is a PHP/MySQL web application for managing item borrowing between students and organizations in a university setting. This implements the ERD designed for the CSIT226 Information Management 1 project.
+HUWAM is a PHP/MySQL web application for managing item borrowing between students and organizations in a university setting. This implements the ERD designed for the CSIT226 Information Management 1 project.
 
 ---
 
-## 🗄️ Database Setup
+##  Database Setup
 
 1. Open **phpMyAdmin** or your MySQL client
 2. Create a new database called: `db_ligaraypacina`
@@ -22,7 +22,7 @@ BorrowEase is a PHP/MySQL web application for managing item borrowing between st
 
 ---
 
-## 📁 File Structure
+##  File Structure
 
 ```
 project/
@@ -70,23 +70,9 @@ project/
 
 ---
 
-## ✅ CRUD Coverage (Increment 1 Checklist)
+##  How to Run
 
-| Entity         | Create | Read | Update | Delete |
-|----------------|--------|------|--------|--------|
-| Users          | ✅     | ✅   | ✅     | ✅     |
-| Students       | ✅     | ✅   | ✅     | ✅     |
-| Organizations  | ✅     | ✅   | ✅     | ✅     |
-| Items          | ✅     | ✅   | ✅     | ✅     |
-| Bookings       | ✅     | ✅   | ✅     | ✅     |
-| Borrow Requests| ✅     | ✅   | ✅     | ✅     |
-| Transactions   | ✅     | ✅   | ✅     | ✅     |
-
----
-
-## 🚀 How to Run
-
-1. Place the entire `project/` folder inside your `htdocs/` (XAMPP) or `www/` (WAMP) directory
+1. Place the entire `project/` folder inside your `htdocs/` (XAMPP) directory
 2. Start Apache and MySQL in XAMPP/WAMP
 3. Import `database.sql` via phpMyAdmin
 4. Visit: `http://localhost/project/`
@@ -94,10 +80,9 @@ project/
 
 ---
 
-## 👥 Group Members
+##  Group Members
 - Mary Rose T. Pacina
 - Ericka Fatima Reign R. Ligaray
 
 **Course:** CSIT226 — Information Management 1  
 **Section:** BSCS 2 F1  
-**Due:** May 11, 2026
