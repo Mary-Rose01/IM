@@ -1,6 +1,7 @@
 <?php
 require_once 'connect.php';
 
+// fix the bug
 if (isLoggedIn()) { header('Location: dashboard.php'); exit; }
 
 $error = '';

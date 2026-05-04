@@ -575,7 +575,7 @@ input:disabled, select:disabled { background: var(--cream-muted); color: var(--t
     .stats-grid { grid-template-columns: 1fr 1fr; }
 }
 
-/* added */
+/* added for the login and register */
 /* ==============================
    AUTH v2 — Responsive Split Card
    ============================== */

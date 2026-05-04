@@ -1,6 +1,8 @@
 <?php
 require_once 'connect.php';
 
+// fixed the error 
+
 $error = '';
 $success = '';
 
