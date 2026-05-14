@@ -3,23 +3,30 @@ require_once 'connect.php';
 requireLogin();
 
 $stats = [];
-$stats['items']     = $connection->query("SELECT COUNT(*) c FROM tblitem WHERE Availability_Status != 'Archived'")->fetch_assoc()['c'];
-$stats['pending']   = $connection->query("SELECT COUNT(*) c FROM tblborrowrequest WHERE Status = 'Pending'")->fetch_assoc()['c'];
-$stats['borrowed']  = $connection->query("SELECT COUNT(*) c FROM tblitem WHERE Availability_Status = 'Borrowed'")->fetch_assoc()['c'];
-$stats['completed'] = $connection->query("SELECT COUNT(*) c FROM tblborrowtransaction WHERE Status = 'Returned'")->fetch_assoc()['c'];
+$isAdmin = ($_SESSION['role'] === 'admin');
+$uid = $_SESSION['user_id'];
+
+$whereItems = $isAdmin ? "1=1" : "Availability_Status != 'Archived'"; 
+$whereReqs  = $isAdmin ? "1=1" : "r.UserID = $uid";     // For requests made by the user
+$whereTx    = $isAdmin ? "1=1" : "r.UserID = $uid";   // For transactions related to the user's requests
+
+$stats['items']     = $connection->query("SELECT COUNT(*) c FROM tblitem WHERE Availability_Status != 'Archived' AND $whereItems")->fetch_assoc()['c'];
+$stats['pending']   = $connection->query("SELECT COUNT(*) c FROM tblborrowrequest r WHERE Status = 'Pending' AND $whereReqs")->fetch_assoc()['c'];
+$stats['borrowed']  = $connection->query("SELECT COUNT(*) c FROM tblitem WHERE Availability_Status = 'Borrowed' AND $whereItems")->fetch_assoc()['c'];
+$stats['completed'] = $connection->query("SELECT COUNT(*) c FROM tblborrowtransaction t JOIN tblborrowrequest r ON t.RequestID = r.RequestID WHERE t.Status = 'Returned' AND $whereTx")->fetch_assoc()['c'];
 
 $recentItems = $connection->query(
     "SELECT i.ItemID, i.Item_Name, i.Category, i.Availability_Status,
             CONCAT(u.FirstName,' ',u.LastName) as OwnerName
      FROM tblitem i JOIN tbluser u ON i.OwnerUserID = u.UserID
-     ORDER BY i.CreatedAt DESC LIMIT 4"
+     WHERE $whereItems ORDER BY i.CreatedAt DESC LIMIT 4"
 );
 
 $recentReqs = $connection->query(
     "SELECT r.RequestID, r.Status, r.CreatedAt, r.Requested_Start, r.Requested_End,
             CONCAT(u.FirstName,' ',u.LastName) as RequesterName
      FROM tblborrowrequest r JOIN tbluser u ON r.UserID = u.UserID
-     ORDER BY r.CreatedAt DESC LIMIT 5"
+     WHERE $whereReqs ORDER BY r.CreatedAt DESC LIMIT 5"
 );
 
 $recentTx = $connection->query(
@@ -29,7 +36,7 @@ $recentTx = $connection->query(
      FROM tblborrowtransaction t
      JOIN tblborrowrequest r ON t.RequestID = r.RequestID
      JOIN tbluser u ON r.UserID = u.UserID
-     ORDER BY t.CreatedAt DESC LIMIT 4"
+     WHERE $whereTx ORDER BY t.CreatedAt DESC LIMIT 4"
 );
 
 $pageTitle = 'Dashboard';
@@ -71,7 +78,7 @@ require_once 'includes/header.php';
     <!-- My Listed Items -->
     <div style="margin-bottom:32px;">
         <div class="section-heading">
-            <h2><i class="fas fa-box"></i> <?php echo $_SESSION['role']==='admin'?'All Items':'My Listed Items'; ?></h2>
+            <h2><i class="fas fa-box"></i> <?php echo $_SESSION['role']==='admin'?'All Items':'Item Catalog'; ?></h2>
             <a href="items.php?action=add" class="section-link">+ Add Item</a>
         </div>
         <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:14px;">

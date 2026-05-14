@@ -3,7 +3,7 @@ require_once 'connect.php';
 requireLogin();
 
 $action  = $_GET['action'] ?? 'list';
-$msg     = '';
+$msg     = $_GET['msg'] ?? '';
 $msgType = 'success';
 $isAdmin = ($_SESSION['role'] === 'admin');
 
@@ -40,13 +40,20 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         else { $msg = 'Error: '.$stmt->error; $msgType = 'danger'; }
         $stmt->close();
     } else {
-        $stmt = $connection->prepare(
-            "UPDATE tblitem SET Item_Name=?,Description=?,Category=?,Status=?,Availability_Status=? WHERE ItemID=?"
-        );
-        $stmt->bind_param('sssssi', $name,$desc,$cat,$status,$avail,$id);
-        if ($stmt->execute()) $msg = 'Item updated.';
-        else { $msg = 'Error: '.$stmt->error; $msgType = 'danger'; }
-        $stmt->close();
+        // Security Check: Only Admin or Owner can Update
+        $check = $connection->query("SELECT OwnerUserID FROM tblitem WHERE ItemID = $id")->fetch_assoc();
+        if ($isAdmin || ($check && $check['OwnerUserID'] == $_SESSION['user_id'])) {
+            $stmt = $connection->prepare(
+                "UPDATE tblitem SET Item_Name=?,Description=?,Category=?,Status=?,Availability_Status=? WHERE ItemID=?"
+            );
+            $stmt->bind_param('sssssi', $name,$desc,$cat,$status,$avail,$id);
+            if ($stmt->execute()) $msg = 'Item updated.';
+            else { $msg = 'Error: '.$stmt->error; $msgType = 'danger'; }
+            $stmt->close();
+        } else {
+            $msg = 'Permission denied.'; 
+            $msgType = 'danger';
+        }
     }
     $action = 'list';
 }
@@ -56,12 +63,17 @@ if ($action === 'edit' && isset($_GET['id'])) {
     $id = intval($_GET['id']);
     $r = $connection->query("SELECT * FROM tblitem WHERE ItemID = $id");
     $editRow = $r->fetch_assoc();
+    // Security Check: Only Admin or Owner can see Edit Form
+    if (!$isAdmin && (!$editRow || $editRow['OwnerUserID'] != $_SESSION['user_id'])) {
+        header("Location: items.php?msg=Permission+denied&msgType=danger");
+        exit;
+    }
 }
 
 // List
 $search = trim($_GET['q'] ?? '');
 $filterAvail = $_GET['avail'] ?? '';
-$where = $isAdmin ? '1=1' : "i.OwnerUserID = {$_SESSION['user_id']}";
+$where = $isAdmin ? '1=1' : "i.Availability_Status != 'Archived'";
 if ($search) { $s = $connection->real_escape_string($search); $where .= " AND (i.Item_Name LIKE '%$s%' OR i.Category LIKE '%$s%')"; }
 if ($filterAvail) { $fa = $connection->real_escape_string($filterAvail); $where .= " AND i.Availability_Status = '$fa'"; }
 
@@ -82,7 +94,7 @@ require_once 'includes/header.php';
 <div class="page-wrapper">
 
 <div class="page-header">
-    <div class="page-title"><h1>Items <?php echo !$isAdmin ? '— My Listings' : ''; ?></h1><p>Manage borrowable items in the system</p></div>
+    <div class="page-title"><h1>Item Catalog</h1><p>Browse and manage borrowable items</p></div>
     <div style="display:flex;gap:10px;"><a href="?action=add" class="btn btn-primary btn-sm"><i class="fas fa-plus"></i> Add Item</a></div>
 </div>
     <?php if ($msg): ?>
@@ -198,8 +210,12 @@ require_once 'includes/header.php';
                         <td style="font-size:12px;"><?php echo htmlspecialchars($row['OwnerName']); ?></td>
                         <td style="font-size:12px;color:var(--gray-500);"><?php echo date('M j, Y', strtotime($row['CreatedAt'])); ?></td>
                         <td>
+                            <?php if ($isAdmin || $row['OwnerUserID'] == $_SESSION['user_id']): ?>
                             <a href="?action=edit&id=<?php echo $row['ItemID']; ?>" class="btn btn-outline btn-sm"><i class="fas fa-pen"></i></a>
                             <a href="?action=delete&id=<?php echo $row['ItemID']; ?>" class="btn btn-danger btn-sm confirm-delete" style="margin-left:4px;"><i class="fas fa-trash"></i></a>
+                            <?php elseif ($row['Availability_Status'] === 'Available'): ?>
+                            <a href="borrow_requests.php?action=add" class="btn btn-success btn-sm"><i class="fas fa-hand-holding"></i> Borrow</a>
+                            <?php endif; ?>
                         </td>
                     </tr>
                     <?php endwhile; else: ?>

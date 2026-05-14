@@ -3,14 +3,22 @@ require_once 'connect.php';
 requireLogin();
 
 $action = $_GET['action'] ?? 'list';
-$msg = ''; $msgType = 'success';
+$msg = ''; 
+$msgType = 'success';
 $isAdmin = ($_SESSION['role'] === 'admin');
 
 // --- DELETE ---
 if ($action === 'delete' && isset($_GET['id'])) {
     $id = intval($_GET['id']);
-    $connection->query("DELETE FROM tblborrowrequest WHERE RequestID = $id");
-    $msg = 'Request deleted.';
+    // Check permission: Admin or Requester
+    $check = $connection->query("SELECT UserID FROM tblborrowrequest WHERE RequestID = $id")->fetch_assoc();
+    if ($isAdmin || ($check && $check['UserID'] == $_SESSION['user_id'])) {
+        $connection->query("DELETE FROM tblborrowrequest WHERE RequestID = $id");
+        $msg = 'Request deleted.';
+    } else {
+        $msg = 'Permission denied.'; 
+        $msgType = 'danger';
+    }
     $action = 'list';
 }
 
@@ -40,11 +48,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         else { $msg = $stmt->error; $msgType='danger'; }
         $stmt->close();
     } else {
-        $stmt = $connection->prepare("UPDATE tblborrowrequest SET Requested_Start=?,Requested_End=?,Status=? WHERE RequestID=?");
-        $stmt->bind_param('sssi', $start,$end,$status,$id);
-        if ($stmt->execute()) $msg = 'Request updated.';
-        else { $msg = $stmt->error; $msgType='danger'; }
-        $stmt->close();
+        // Security Check: Admin or Requester
+        $check = $connection->query("SELECT UserID FROM tblborrowrequest WHERE RequestID = $id")->fetch_assoc();
+        if ($isAdmin || ($check && $check['UserID'] == $_SESSION['user_id'])) {
+            $stmt = $connection->prepare("UPDATE tblborrowrequest SET Requested_Start=?,Requested_End=?,Status=? WHERE RequestID=?");
+            $stmt->bind_param('sssi', $start,$end,$status,$id);
+            if ($stmt->execute()) $msg = 'Request updated.';
+            else { $msg = $stmt->error; $msgType='danger'; }
+            $stmt->close();
+        } else {
+            $msg = 'Permission denied.';
+            $msgType = 'danger';
+        }
     }
     $action = 'list';
 }
@@ -53,6 +68,11 @@ $editRow = null;
 if ($action === 'edit' && isset($_GET['id'])) {
     $id = intval($_GET['id']);
     $editRow = $connection->query("SELECT * FROM tblborrowrequest WHERE RequestID=$id")->fetch_assoc();
+    // Security Check
+    if (!$isAdmin && (!$editRow || $editRow['UserID'] != $_SESSION['user_id'])) {
+        header("Location: borrow_requests.php?msg=Permission+denied&msgType=danger");
+        exit;
+    }
 }
 
 // List

@@ -1,14 +1,24 @@
 <?php
 require_once 'connect.php';
-requireAdmin();
+requireLogin();
 
 $action = $_GET['action'] ?? 'list';
 $msg = ''; $msgType = 'success';
+$isAdmin = ($_SESSION['role'] === 'admin');
+$uid = $_SESSION['user_id'];
 
+// --- DELETE ---
 if ($action === 'delete' && isset($_GET['id'])) {
     $id = intval($_GET['id']);
-    $connection->query("DELETE FROM tblborrowtransaction WHERE TransactionID = $id");
-    $msg = 'Transaction deleted.'; $action = 'list';
+    // Only admin can delete transactions
+    if ($isAdmin) {
+        $connection->query("DELETE FROM tblborrowtransaction WHERE TransactionID = $id");
+        $msg = 'Transaction deleted.';
+    } else {
+        $msg = 'Permission denied.';
+        $msgType = 'danger';
+    }
+    $action = 'list';
 }
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
@@ -28,11 +38,27 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         else { $msg = $stmt->error; $msgType='danger'; }
         $stmt->close();
     } else {
-        $stmt = $connection->prepare("UPDATE tblborrowtransaction SET ActualReturn_DateTime=?,Condition_On_Return=?,Status=? WHERE TransactionID=?");
-        $stmt->bind_param('sssi', $actual,$condRet,$status,$id);
-        if ($stmt->execute()) $msg = 'Transaction updated.';
-        else { $msg = $stmt->error; $msgType='danger'; }
-        $stmt->close();
+        // Security Check for updating: Admin or Item Owner
+        $check = $connection->query(
+            "SELECT i.OwnerUserID
+             FROM tblborrowtransaction t
+             LEFT JOIN tblborrowrequest r ON t.RequestID = r.RequestID
+             LEFT JOIN tblbooking b ON r.BookingID = b.BookingID
+             LEFT JOIN tblavailabilityslot avs ON b.SlotID = avs.SlotID
+             LEFT JOIN tblitem i ON avs.ItemID = i.ItemID
+             WHERE t.TransactionID = $id"
+        )->fetch_assoc();
+
+        if ($isAdmin || ($check && $check['OwnerUserID'] == $_SESSION['user_id'])) {
+            $stmt = $connection->prepare("UPDATE tblborrowtransaction SET ActualReturn_DateTime=?,Condition_On_Return=?,Status=? WHERE TransactionID=?");
+            $stmt->bind_param('sssi', $actual,$condRet,$status,$id);
+            if ($stmt->execute()) $msg = 'Transaction updated.';
+            else { $msg = $stmt->error; $msgType='danger'; }
+            $stmt->close();
+        } else {
+            $msg = 'Permission denied.';
+            $msgType = 'danger';
+        }
     }
     $action = 'list';
 }
@@ -40,15 +66,36 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 $editRow = null;
 if ($action === 'edit' && isset($_GET['id'])) {
     $id = intval($_GET['id']);
-    $editRow = $connection->query("SELECT * FROM tblborrowtransaction WHERE TransactionID=$id")->fetch_assoc();
+    // Fetch transaction details along with item owner for permission check
+    $r = $connection->query(
+        "SELECT t.*, i.OwnerUserID
+         FROM tblborrowtransaction t
+         LEFT JOIN tblborrowrequest r ON t.RequestID = r.RequestID
+         LEFT JOIN tblbooking b ON r.BookingID = b.BookingID
+         LEFT JOIN tblavailabilityslot avs ON b.SlotID = avs.SlotID
+         LEFT JOIN tblitem i ON avs.ItemID = i.ItemID
+         WHERE t.TransactionID = $id"
+    );
+    $editRow = $r->fetch_assoc();
+
+    // Security Check for editing: Admin or Item Owner
+    if (!$isAdmin && (!$editRow || $editRow['OwnerUserID'] != $_SESSION['user_id'])) {
+        header("Location: transactions.php?msg=Permission+denied&msgType=danger");
+        exit;
+    }
 }
 
+$where = $isAdmin ? '1=1' : "r.UserID = $uid"; // Filter by requester for non-admins
+
 $transactions = $connection->query(
-    "SELECT t.*, CONCAT(u.FirstName,' ',u.LastName) as RequesterName, r.Requested_Start, r.Requested_End
+    "SELECT t.*, CONCAT(u.FirstName,' ',u.LastName) as RequesterName, r.Requested_Start, r.Requested_End, i.OwnerUserID
      FROM tblborrowtransaction t
      JOIN tblborrowrequest r ON t.RequestID = r.RequestID
      JOIN tbluser u ON r.UserID = u.UserID
-     ORDER BY t.CreatedAt DESC"
+     LEFT JOIN tblbooking b ON r.BookingID = b.BookingID
+     LEFT JOIN tblavailabilityslot avs ON b.SlotID = avs.SlotID
+     LEFT JOIN tblitem i ON avs.ItemID = i.ItemID
+     WHERE $where ORDER BY t.CreatedAt DESC"
 );
 
 $approvedReqs = $connection->query(
@@ -67,8 +114,10 @@ require_once 'includes/header.php';
 <div class="page-wrapper">
 
 <div class="page-header">
-    <div class="page-title"><h1>Borrow Transactions</h1><p>Track item releases and returns</p></div>
+    <div class="page-title"><h1>Borrow Transactions</h1><p><?php echo $isAdmin ? 'Track all item releases and returns' : 'View your item borrowing history'; ?></p></div>
+    <?php if ($isAdmin): // Only admin can record new transactions ?>
     <div style="display:flex;gap:10px;"><a href="?action=add" class="btn btn-primary btn-sm"><i class="fas fa-plus"></i> Record Transaction</a></div>
+    <?php endif; ?>
 </div>
     <?php if ($msg): ?>
     <div class="alert alert-<?php echo $msgType; ?> auto-dismiss"><i class="fas fa-circle-check"></i> <?php echo $msg; ?></div>
@@ -77,7 +126,7 @@ require_once 'includes/header.php';
     <?php if ($action === 'add' || $action === 'edit'): ?>
     <div class="card" style="max-width:700px;margin-bottom:24px;">
         <div class="card-header"><div><h3><?php echo $action==='edit'?'Update Transaction':'New Transaction'; ?></h3></div>
-        <a href="transactions.php" class="btn btn-outline btn-sm"><i class="fas fa-xmark"></i></a></div>
+        <a href="transactions.php" class="btn btn-outline btn-sm"><i class="fas fa-xmark"></i> Cancel</a></div>
         <div class="card-body">
             <form method="post">
                 <input type="hidden" name="hdnID" value="<?php echo $editRow['TransactionID'] ?? 0; ?>">
@@ -161,8 +210,13 @@ require_once 'includes/header.php';
                             <span class="badge <?php echo $sc; ?>"><?php echo $row['Status']; ?></span>
                         </td>
                         <td>
-                            <a href="?action=edit&id=<?php echo $row['TransactionID']; ?>" class="btn btn-outline btn-sm"><i class="fas fa-pen"></i></a>
-                            <a href="?action=delete&id=<?php echo $row['TransactionID']; ?>" class="btn btn-danger btn-sm confirm-delete" style="margin-left:4px;"><i class="fas fa-trash"></i></a>
+                            <?php
+                            $canEdit = $isAdmin || ($row['OwnerUserID'] == $_SESSION['user_id']);
+                            $canDelete = $isAdmin; // Only admin can delete transactions
+                            ?>
+                            <?php if ($canEdit): ?><a href="?action=edit&id=<?php echo $row['TransactionID']; ?>" class="btn btn-outline btn-sm"><i class="fas fa-pen"></i></a><?php endif; ?>
+                            <?php if ($canDelete): ?><a href="?action=delete&id=<?php echo $row['TransactionID']; ?>" class="btn btn-danger btn-sm confirm-delete" style="margin-left:4px;"><i class="fas fa-trash"></i></a><?php endif; ?>
+                            <?php if (!$canEdit && !$canDelete): ?>—<?php endif; ?>
                         </td>
                     </tr>
                     <?php endwhile; else: ?>
