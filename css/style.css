@@ -74,11 +74,20 @@ img { max-width: 100%; }
     white-space: nowrap;
     margin-right: 8px;
     flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    gap: 10px;
 }
 
-/* HUWAM brand stays as-is (no Poppins override needed — Poppins IS the font now) */
+.navbar-logo {
+    height: 32px;
+    width: auto;
+}
+
 .navbar-brand .brand-huwam {
-    font-weight: 800;
+    font-family: 'Georgia', serif !important;
+    font-weight: 700;
+    letter-spacing: -1.5px;
     color: var(--maroon);
 }
 

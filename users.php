@@ -201,7 +201,7 @@ require_once 'includes/header.php';
                             <?php if($row['MiddleName']): ?><div style="font-size:11px;color:var(--gray-400);"><?php echo htmlspecialchars($row['MiddleName']); ?></div><?php endif; ?>
                         </td>
                         <td style="font-size:12px;"><?php echo htmlspecialchars($row['Institutional_Email']); ?></td>
-                        <td class="mono"><?php echo htmlspecialchars($row['Username']); ?></td>
+                        <td style="font-size:12px;"><?php echo htmlspecialchars($row['Username']); ?></td>
                         <td>
                             <?php $rcls = $row['Role']==='admin'?'badge-danger':($row['Role']==='student'?'badge-info':'badge-warning'); ?>
                             <span class="badge <?php echo $rcls; ?>"><?php echo ucfirst($row['Role']); ?></span>

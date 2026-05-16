@@ -41,12 +41,23 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $end     = trim($_POST['txtend'] ?? '');
     $status  = trim($_POST['txtstatus'] ?? 'Pending');
 
-    if ($id === 0) {
+    // Validation: Ensure requested time is not in the past and end is after start
+    $now = time();
+    if (strtotime($start) < ($now - 60)) { // 60s grace period for form submission
+        $msg = 'Requested start time cannot be in the past.';
+        $msgType = 'danger';
+        $action = ($id === 0) ? 'add' : 'edit';
+    } elseif (strtotime($end) <= strtotime($start)) {
+        $msg = 'Requested end time must be after the start time.';
+        $msgType = 'danger';
+        $action = ($id === 0) ? 'add' : 'edit';
+    } elseif ($id === 0) {
         $stmt = $connection->prepare("INSERT INTO tblborrowrequest (UserID,BookingID,Requested_Start,Requested_End,Status) VALUES (?,?,?,?,?)");
         $stmt->bind_param('iisss', $userID,$bookID,$start,$end,$status);
         if ($stmt->execute()) $msg = 'Borrow request created.';
         else { $msg = $stmt->error; $msgType='danger'; }
         $stmt->close();
+        $action = 'list';
     } else {
         // Security Check: Admin or Requester
         $check = $connection->query("SELECT UserID FROM tblborrowrequest WHERE RequestID = $id")->fetch_assoc();
@@ -60,8 +71,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $msg = 'Permission denied.';
             $msgType = 'danger';
         }
+        $action = 'list';
     }
-    $action = 'list';
 }
 
 $editRow = null;
@@ -111,10 +122,9 @@ require_once 'includes/header.php';
     <div class="card" style="max-width:620px;margin-bottom:24px;">
         <div class="card-header">
             <div><h3><?php echo $action==='edit'?'Edit Request':'New Borrow Request'; ?></h3></div>
-            <a href="borrow_requests.php" class="btn btn-outline btn-sm"><i class="fas fa-xmark"></i> Cancel</a>
         </div>
         <div class="card-body">
-            <form method="post">
+            <form method="post" id="requestForm">
                 <input type="hidden" name="hdnID" value="<?php echo $editRow['RequestID'] ?? 0; ?>">
                 <div class="form-grid">
                     <?php if ($isAdmin): ?>
@@ -137,11 +147,11 @@ require_once 'includes/header.php';
                     <?php endif; ?>
                     <div class="form-group">
                         <label>Requested Start <span class="required">*</span></label>
-                        <input type="datetime-local" name="txtstart" value="<?php echo str_replace(' ','T',$editRow['Requested_Start']??''); ?>" required>
+                        <input type="datetime-local" name="txtstart" value="<?php echo str_replace(' ','T',$editRow['Requested_Start']??''); ?>" min="<?php echo date('Y-m-d\TH:i'); ?>" required>
                     </div>
                     <div class="form-group">
                         <label>Requested End <span class="required">*</span></label>
-                        <input type="datetime-local" name="txtend" value="<?php echo str_replace(' ','T',$editRow['Requested_End']??''); ?>" required>
+                        <input type="datetime-local" name="txtend" value="<?php echo str_replace(' ','T',$editRow['Requested_End']??''); ?>" min="<?php echo date('Y-m-d\TH:i'); ?>" required>
                     </div>
                     <?php if ($isAdmin): ?>
                     <div class="form-group">
@@ -155,8 +165,8 @@ require_once 'includes/header.php';
                     <?php endif; ?>
                 </div>
                 <div style="margin-top:20px;display:flex;gap:10px;">
-                    <button type="submit" class="btn btn-primary"><i class="fas fa-save"></i> Save</button>
-                    <a href="borrow_requests.php" class="btn btn-outline">Cancel</a>
+                    <button type="button" onclick="validateRequestAndShowModal()" class="btn btn-primary"><i class="fas fa-save"></i> Save</button>
+                    <button type="button" onclick="showConfirmModal('borrow_requests.php', 'Discard Changes', 'Are you sure you want to leave? Any unsaved changes will be lost.')" class="btn btn-outline">Cancel</button>
                 </div>
             </form>
         </div>
@@ -200,12 +210,12 @@ require_once 'includes/header.php';
                         <td style="font-size:12px;color:var(--gray-500);"><?php echo date('M j, Y', strtotime($row['CreatedAt'])); ?></td>
                         <td style="display:flex;gap:4px;flex-wrap:wrap;">
                             <?php if ($isAdmin && $row['Status'] === 'Pending'): ?>
-                            <a href="?action=status&id=<?php echo $row['RequestID']; ?>&s=Approved" class="btn btn-success btn-sm"><i class="fas fa-check"></i></a>
-                            <a href="?action=status&id=<?php echo $row['RequestID']; ?>&s=Rejected" class="btn btn-danger btn-sm"><i class="fas fa-xmark"></i></a>
+                            <button type="button" onclick="showConfirmModal('?action=status&id=<?php echo $row['RequestID']; ?>&s=Approved', 'Approve Request', 'Do you want to approve this borrow request?', 'btn-primary')" class="btn btn-success btn-sm"><i class="fas fa-check"></i></button>
+                            <button type="button" onclick="showConfirmModal('?action=status&id=<?php echo $row['RequestID']; ?>&s=Rejected', 'Decline Request', 'Are you sure you want to decline this request?', 'btn-outline')" class="btn btn-danger btn-sm"><i class="fas fa-xmark"></i></button>
                             <?php endif; ?>
                             <a href="?action=edit&id=<?php echo $row['RequestID']; ?>" class="btn btn-outline btn-sm"><i class="fas fa-pen"></i></a>
                             <?php if ($isAdmin): ?>
-                            <a href="?action=delete&id=<?php echo $row['RequestID']; ?>" class="btn btn-danger btn-sm confirm-delete"><i class="fas fa-trash"></i></a>
+                            <button type="button" onclick="showConfirmModal('?action=delete&id=<?php echo $row['RequestID']; ?>', 'Delete Request', 'Are you sure you want to delete this borrow request? This action cannot be undone.')" class="btn btn-danger btn-sm"><i class="fas fa-trash"></i></button>
                             <?php endif; ?>
                         </td>
                     </tr>
@@ -218,5 +228,53 @@ require_once 'includes/header.php';
     </div>
 </div>
 </div>
+
+<div class="modal-overlay" id="confirmModalOverlay">
+    <div class="modal">
+        <div class="modal-header">
+            <h3 id="modalTitle">Confirm Action</h3>
+            <button type="button" class="btn-ghost" onclick="closeConfirmModal()"><i class="fas fa-xmark"></i></button>
+        </div>
+        <div class="modal-body">
+            <p id="modalMessage">Are you sure you want to proceed?</p>
+        </div>
+        <div class="modal-footer">
+            <button type="button" class="btn btn-outline" onclick="closeConfirmModal()">Cancel</button>
+            <a href="#" id="modalConfirmBtn" class="btn btn-danger">Confirm</a>
+        </div>
+    </div>
+</div>
+
+<script>
+function validateRequestAndShowModal() {
+    const form = document.getElementById('requestForm');
+    if (!form.checkValidity()) {
+        form.reportValidity();
+        return;
+    }
+    showConfirmModal('SUBMIT_FORM', 'Save Request', 'Are you sure you want to save this borrow request?', 'btn-primary');
+}
+
+function showConfirmModal(url, title, message, btnClass = 'btn-danger') {
+    document.getElementById('modalTitle').innerText = title;
+    document.getElementById('modalMessage').innerText = message;
+    const confirmBtn = document.getElementById('modalConfirmBtn');
+
+    if (url === 'SUBMIT_FORM') {
+        confirmBtn.href = "javascript:void(0)";
+        confirmBtn.onclick = () => document.getElementById('requestForm').submit();
+    } else {
+        confirmBtn.href = url;
+        confirmBtn.onclick = null;
+    }
+
+    confirmBtn.className = 'btn ' + btnClass;
+    document.getElementById('confirmModalOverlay').classList.add('open');
+}
+
+function closeConfirmModal() {
+    document.getElementById('confirmModalOverlay').classList.remove('open');
+}
+</script>
 
 <?php require_once 'includes/footer.php'; ?>

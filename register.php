@@ -205,7 +205,7 @@ require_once 'includes/header.php';
 
         <div class="auth-panel auth-panel--right">
             <div class="auth-panel-inner">
-                <img src="https://www.figma.com/api/mcp/asset/d0a1aca0-7d6e-412b-ae4d-37b9720ca456" alt="CIT-U Logo" class="panel-logo" style="width: 120px; margin-bottom: 20px;">
+                <img src="https://images.bukas.ph/images/school-logos/CIT.original.png" alt="" class="panel-logo" style="width: 120px; margin-bottom: 20px;">
                 <div class="panel-brand" style="font-size: 2.5rem; letter-spacing: 5px;">HUWAM</div>
                 <p class="panel-sub">Access your institutional borrowing account.</p>
                 <a href="login.php" class="panel-btn">LOG IN</a>

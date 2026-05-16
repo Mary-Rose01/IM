@@ -108,7 +108,6 @@ $approvedReqs = $connection->query(
 $pageTitle = 'Borrow Transactions';
 require_once 'includes/header.php';
 ?>
-
 <?php require_once "includes/navbar.php"; ?>
 <div class="layout-top">
 <div class="page-wrapper">
@@ -125,10 +124,11 @@ require_once 'includes/header.php';
 
     <?php if ($action === 'add' || $action === 'edit'): ?>
     <div class="card" style="max-width:700px;margin-bottom:24px;">
-        <div class="card-header"><div><h3><?php echo $action==='edit'?'Update Transaction':'New Transaction'; ?></h3></div>
-        <a href="transactions.php" class="btn btn-outline btn-sm"><i class="fas fa-xmark"></i> Cancel</a></div>
+        <div class="card-header">
+            <div><h3><?php echo $action==='edit'?'Update Transaction':'New Transaction'; ?></h3></div>
+        </div>
         <div class="card-body">
-            <form method="post">
+            <form method="post" id="transactionForm">
                 <input type="hidden" name="hdnID" value="<?php echo $editRow['TransactionID'] ?? 0; ?>">
                 <div class="form-grid cols-3">
                     <?php if ($action === 'add'): ?>
@@ -180,14 +180,15 @@ require_once 'includes/header.php';
                     </div>
                 </div>
                 <div style="margin-top:20px;display:flex;gap:10px;">
-                    <button type="submit" class="btn btn-primary"><i class="fas fa-save"></i> Save Transaction</button>
-                    <a href="transactions.php" class="btn btn-outline">Cancel</a>
+                    <button type="button" onclick="validateTransactionAndShowModal()" class="btn btn-primary"><i class="fas fa-save"></i> Save Transaction</button>
+                    <button type="button" onclick="showConfirmModal('transactions.php', 'Discard Changes', 'Are you sure you want to leave? Any unsaved changes will be lost.')" class="btn btn-outline">Cancel</button>
                 </div>
             </form>
         </div>
     </div>
     <?php endif; ?>
 
+    <?php if ($action === 'list'): ?>
     <div class="card">
         <div class="card-header"><div><h3>Transaction History</h3><p><?php echo $transactions->num_rows; ?> transaction(s)</p></div></div>
         <div class="table-wrapper">
@@ -215,7 +216,7 @@ require_once 'includes/header.php';
                             $canDelete = $isAdmin; // Only admin can delete transactions
                             ?>
                             <?php if ($canEdit): ?><a href="?action=edit&id=<?php echo $row['TransactionID']; ?>" class="btn btn-outline btn-sm"><i class="fas fa-pen"></i></a><?php endif; ?>
-                            <?php if ($canDelete): ?><a href="?action=delete&id=<?php echo $row['TransactionID']; ?>" class="btn btn-danger btn-sm confirm-delete" style="margin-left:4px;"><i class="fas fa-trash"></i></a><?php endif; ?>
+                                <?php if ($canDelete): ?><button type="button" onclick="showConfirmModal('?action=delete&id=<?php echo $row['TransactionID']; ?>', 'Delete Transaction', 'Are you sure you want to delete this transaction record?')" class="btn btn-danger btn-sm" style="margin-left:4px;"><i class="fas fa-trash"></i></button><?php endif; ?>
                             <?php if (!$canEdit && !$canDelete): ?>—<?php endif; ?>
                         </td>
                     </tr>
@@ -226,7 +227,53 @@ require_once 'includes/header.php';
             </table>
         </div>
     </div>
+    <?php endif; ?>
 </div>
 </div>
+
+<div class="modal-overlay" id="confirmModalOverlay">
+    <div class="modal">
+        <div class="modal-header">
+            <h3 id="modalTitle">Confirm Action</h3>
+            <button type="button" class="btn-ghost" onclick="closeConfirmModal()"><i class="fas fa-xmark"></i></button>
+        </div>
+        <div class="modal-body">
+            <p id="modalMessage">Are you sure you want to proceed?</p>
+        </div>
+        <div class="modal-footer">
+            <button type="button" class="btn btn-outline" onclick="closeConfirmModal()">Cancel</button>
+            <a href="#" id="modalConfirmBtn" class="btn btn-danger">Confirm</a>
+        </div>
+    </div>
+</div>
+
+<script>
+function validateTransactionAndShowModal() {
+    const form = document.getElementById('transactionForm');
+    if (!form.checkValidity()) {
+        form.reportValidity();
+        return;
+    }
+    showConfirmModal('SUBMIT_FORM', 'Save Transaction', 'Are you sure you want to save this transaction?', 'btn-primary');
+}
+
+function showConfirmModal(url, title, message, btnClass = 'btn-danger') {
+    document.getElementById('modalTitle').innerText = title;
+    document.getElementById('modalMessage').innerText = message;
+    const confirmBtn = document.getElementById('modalConfirmBtn');
+    if (url === 'SUBMIT_FORM') {
+        confirmBtn.href = "javascript:void(0)";
+        confirmBtn.onclick = () => document.getElementById('transactionForm').submit();
+    } else {
+        confirmBtn.href = url;
+        confirmBtn.onclick = null;
+    }
+    confirmBtn.className = 'btn ' + btnClass;
+    document.getElementById('confirmModalOverlay').classList.add('open');
+}
+function closeConfirmModal() {
+    document.getElementById('confirmModalOverlay').classList.remove('open');
+}
+</script>
 
 <?php require_once 'includes/footer.php'; ?>

@@ -50,8 +50,8 @@ require_once 'includes/header.php';
         <!-- Colored panel — left on login -->
         <div class="auth-panel auth-panel--left">
             <div class="auth-panel-inner">
-                <img src="https://www.figma.com/api/mcp/asset/d0a1aca0-7d6e-412b-ae4d-37b9720ca456"
-                     alt="CIT-U Logo" class="panel-logo"
+                <img src="https://images.bukas.ph/images/school-logos/CIT.original.png"
+                     alt="" class="panel-logo"
                      onerror="this.style.display='none'">
                 <div class="panel-brand">HUWAM</div>
                 <p class="panel-sub">A peer-to-peer item borrowing platform built exclusively for CIT-U students.</p>

@@ -70,6 +70,21 @@ if ($action === 'edit' && isset($_GET['id'])) {
     }
 }
 
+$viewRow = null;
+if ($action === 'view' && isset($_GET['id'])) {
+    $id = intval($_GET['id']);
+    $r = $connection->query(
+        "SELECT i.*, CONCAT(u.FirstName,' ',u.LastName) as OwnerName
+         FROM tblitem i JOIN tbluser u ON i.OwnerUserID = u.UserID
+         WHERE i.ItemID = $id"
+    );
+    $viewRow = $r->fetch_assoc();
+    if (!$viewRow) {
+        header("Location: items.php?msg=Item+not+found&msgType=danger");
+        exit;
+    }
+}
+
 // List
 $search = trim($_GET['q'] ?? '');
 $filterAvail = $_GET['avail'] ?? '';
@@ -95,7 +110,9 @@ require_once 'includes/header.php';
 
 <div class="page-header">
     <div class="page-title"><h1>Item Catalog</h1><p>Browse and manage borrowable items</p></div>
+    <?php if ($action !== 'add' && $action !== 'edit'): ?>
     <div style="display:flex;gap:10px;"><a href="?action=add" class="btn btn-primary btn-sm"><i class="fas fa-plus"></i> Add Item</a></div>
+    <?php endif; ?>
 </div>
     <?php if ($msg): ?>
     <div class="alert alert-<?php echo $msgType; ?> auto-dismiss"><i class="fas fa-circle-check"></i> <?php echo $msg; ?></div>
@@ -105,10 +122,9 @@ require_once 'includes/header.php';
     <div class="card" style="max-width:680px;margin-bottom:24px;">
         <div class="card-header">
             <div><h3><?php echo $action==='edit'?'Edit Item':'Add New Item'; ?></h3></div>
-            <a href="items.php" class="btn btn-outline btn-sm"><i class="fas fa-xmark"></i> Cancel</a>
         </div>
         <div class="card-body">
-            <form method="post">
+            <form method="post" id="itemForm">
                 <input type="hidden" name="hdnID" value="<?php echo $editRow['ItemID'] ?? 0; ?>">
                 <div class="form-grid">
                     <div class="form-group span-2">
@@ -156,15 +172,57 @@ require_once 'includes/header.php';
                     </div>
                 </div>
                 <div style="margin-top:20px;display:flex;gap:10px;">
-                    <button type="submit" class="btn btn-primary"><i class="fas fa-save"></i> Save Item</button>
-                    <a href="items.php" class="btn btn-outline">Cancel</a>
+                    <button type="button" onclick="validateAndShowModal()" class="btn btn-primary"><i class="fas fa-save"></i> Save Item</button>
+                    <button type="button" onclick="showConfirmModal('items.php', 'Discard Changes', 'Are you sure you want to leave? Any unsaved changes will be lost.')" class="btn btn-outline">Cancel</button>
                 </div>
             </form>
         </div>
     </div>
     <?php endif; ?>
 
+    <?php if ($action === 'view' && $viewRow): ?>
+    <div class="card" style="max-width:850px;margin-bottom:24px;">
+        <div class="card-header">
+            <div>
+                <span class="badge badge-gray" style="margin-bottom:4px;"><?php echo htmlspecialchars($viewRow['Category'] ?? 'Item'); ?></span>
+                <h3><?php echo htmlspecialchars($viewRow['Item_Name']); ?></h3>
+            </div>
+            <a href="items.php" class="btn btn-outline btn-sm"><i class="fas fa-arrow-left"></i> Back to Catalog</a>
+        </div>
+        <div class="card-body">
+            <div style="max-width: 650px;">
+                    <div style="margin-bottom:20px;">
+                        <label style="color:var(--text-muted); font-size:11px; text-transform:uppercase; letter-spacing:0.5px;">Item Status</label>
+                        <div style="margin-top:6px; display:flex; gap:8px;">
+                            <?php $ac=$viewRow['Availability_Status']==='Available'?'badge-success':($viewRow['Availability_Status']==='Borrowed'?'badge-warning':($viewRow['Availability_Status']==='Archived'?'badge-gray':'badge-info')); ?>
+                            <span class="badge <?php echo $ac; ?>" style="font-size:12px; padding:6px 14px;"><?php echo $viewRow['Availability_Status']; ?></span>
+                            <?php $sc=$viewRow['Status']==='Good'?'badge-success':($viewRow['Status']==='Lost'?'badge-danger':'badge-warning'); ?>
+                            <span class="badge <?php echo $sc; ?>" style="font-size:12px; padding:6px 14px;">Condition: <?php echo $viewRow['Status']; ?></span>
+                        </div>
+                    </div>
+                    <div style="margin-bottom:20px;">
+                        <label style="color:var(--text-muted); font-size:11px; text-transform:uppercase; letter-spacing:0.5px;">Description</label>
+                        <p style="margin-top:6px; color:var(--text-dark); line-height:1.6; font-size:15px;"><?php echo nl2br(htmlspecialchars($viewRow['Description'] ?: 'No description provided for this item.')); ?></p>
+                    </div>
+                    <div style="margin-bottom:24px; padding:16px; background:var(--cream); border-radius:var(--radius-sm); border-left:4px solid var(--maroon);">
+                        <div style="font-size:12px; color:var(--text-muted);">Owned by</div>
+                        <div style="font-weight:700; color:var(--text-dark); font-size:16px;"><?php echo htmlspecialchars($viewRow['OwnerName']); ?></div>
+                        <div style="font-size:11px; color:var(--text-muted); margin-top:2px;">Listed on <?php echo date('M j, Y', strtotime($viewRow['CreatedAt'])); ?></div>
+                    </div>
+                    <div style="display:flex; gap:12px;">
+                        <?php if ($viewRow['Availability_Status'] === 'Available' && $viewRow['OwnerUserID'] != $_SESSION['user_id']): ?>
+                        <a href="borrow_requests.php?action=add&item_id=<?php echo $viewRow['ItemID']; ?>" class="btn btn-primary btn-lg"><i class="fas fa-hand-holding"></i> Request to Borrow</a>
+                        <?php endif; ?>
+                        <?php if ($isAdmin || $viewRow['OwnerUserID'] == $_SESSION['user_id']): ?>
+                        <a href="?action=edit&id=<?php echo $viewRow['ItemID']; ?>" class="btn btn-outline"><i class="fas fa-pen"></i> Edit Item</a>
+                        <?php endif; ?>
+                    </div>
+        </div>
+    </div>
+    <?php endif; ?>
+
     <!-- Filters -->
+    <?php if ($action === 'list'): ?>
     <div class="card">
         <div class="card-header">
             <div><h3>Item Catalog</h3><p><?php echo $items ? $items->num_rows : 0; ?> item(s)</p></div>
@@ -212,7 +270,7 @@ require_once 'includes/header.php';
                         <td>
                             <?php if ($isAdmin || $row['OwnerUserID'] == $_SESSION['user_id']): ?>
                             <a href="?action=edit&id=<?php echo $row['ItemID']; ?>" class="btn btn-outline btn-sm"><i class="fas fa-pen"></i></a>
-                            <a href="?action=delete&id=<?php echo $row['ItemID']; ?>" class="btn btn-danger btn-sm confirm-delete" style="margin-left:4px;"><i class="fas fa-trash"></i></a>
+                            <button type="button" onclick="showConfirmModal('?action=delete&id=<?php echo $row['ItemID']; ?>', 'Delete Item', 'Are you sure you want to delete this item? This action cannot be undone.')" class="btn btn-danger btn-sm" style="margin-left:4px;"><i class="fas fa-trash"></i></button>
                             <?php elseif ($row['Availability_Status'] === 'Available'): ?>
                             <a href="borrow_requests.php?action=add" class="btn btn-success btn-sm"><i class="fas fa-hand-holding"></i> Borrow</a>
                             <?php endif; ?>
@@ -225,7 +283,55 @@ require_once 'includes/header.php';
             </table>
         </div>
     </div>
+    <?php endif; ?>
 </div>
 </div>
+
+<div class="modal-overlay" id="confirmModalOverlay">
+    <div class="modal">
+        <div class="modal-header">
+            <h3 id="modalTitle">Confirm Action</h3>
+            <button type="button" class="btn-ghost" onclick="closeConfirmModal()"><i class="fas fa-xmark"></i></button>
+        </div>
+        <div class="modal-body">
+            <p id="modalMessage">Are you sure you want to proceed?</p>
+        </div>
+        <div class="modal-footer">
+            <button type="button" class="btn btn-outline" onclick="closeConfirmModal()">Cancel</button>
+            <a href="#" id="modalConfirmBtn" class="btn btn-danger">Confirm</a>
+        </div>
+    </div>
+</div>
+
+<script>
+function validateAndShowModal() {
+    const form = document.getElementById('itemForm');
+    if (!form.checkValidity()) {
+        form.reportValidity();
+        return;
+    }
+    showConfirmModal('SUBMIT_FORM', 'Save Item', 'Are you sure you want to save this item?', 'btn-primary');
+}
+
+function showConfirmModal(url, title, message, btnClass = 'btn-danger') {
+    document.getElementById('modalTitle').innerText = title;
+    document.getElementById('modalMessage').innerText = message;
+    const confirmBtn = document.getElementById('modalConfirmBtn');
+    
+    if (url === 'SUBMIT_FORM') {
+        confirmBtn.href = "javascript:void(0)";
+        confirmBtn.onclick = () => document.getElementById('itemForm').submit();
+    } else {
+        confirmBtn.href = url;
+        confirmBtn.onclick = null;
+    }
+    
+    confirmBtn.className = 'btn ' + btnClass;
+    document.getElementById('confirmModalOverlay').classList.add('open');
+}
+function closeConfirmModal() {
+    document.getElementById('confirmModalOverlay').classList.remove('open');
+}
+</script>
 
 <?php require_once 'includes/footer.php'; ?>
