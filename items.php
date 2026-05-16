@@ -92,10 +92,19 @@ $where = $isAdmin ? '1=1' : "i.Availability_Status != 'Archived'";
 if ($search) { $s = $connection->real_escape_string($search); $where .= " AND (i.Item_Name LIKE '%$s%' OR i.Category LIKE '%$s%')"; }
 if ($filterAvail) { $fa = $connection->real_escape_string($filterAvail); $where .= " AND i.Availability_Status = '$fa'"; }
 
+// Pagination Logic
+$limit = 10;
+$p = max(1, intval($_GET['p'] ?? 1));
+$off = ($p - 1) * $limit;
+
+$totalCountResult = $connection->query("SELECT COUNT(*) c FROM tblitem i WHERE $where");
+$totalCount = $totalCountResult->fetch_assoc()['c'];
+$totalPages = max(1, ceil($totalCount / $limit));
+
 $items = $connection->query(
     "SELECT i.*, CONCAT(u.FirstName,' ',u.LastName) as OwnerName
      FROM tblitem i JOIN tbluser u ON i.OwnerUserID = u.UserID
-     WHERE $where ORDER BY i.CreatedAt DESC"
+     WHERE $where ORDER BY i.CreatedAt DESC LIMIT $limit OFFSET $off"
 );
 
 $owners = $isAdmin ? $connection->query("SELECT UserID, CONCAT(FirstName,' ',LastName) as Name FROM tbluser WHERE isActive=1 ORDER BY FirstName") : null;
@@ -225,7 +234,7 @@ require_once 'includes/header.php';
     <?php if ($action === 'list'): ?>
     <div class="card">
         <div class="card-header">
-            <div><h3>Item Catalog</h3><p><?php echo $items ? $items->num_rows : 0; ?> item(s)</p></div>
+            <div><h3>Item Catalog</h3><p><?php echo $totalCount; ?> item(s)</p></div>
             <form method="get" style="display:flex;gap:8px;align-items:center;">
                 <div class="search-bar"><i class="fas fa-search"></i>
                     <input type="text" name="q" placeholder="Search items..." value="<?php echo htmlspecialchars($search); ?>">
@@ -282,6 +291,22 @@ require_once 'includes/header.php';
                 </tbody>
             </table>
         </div>
+
+        <!-- Pagination UI -->
+        <?php if ($totalPages >= 1): ?>
+        <div class="pagination" style="margin-top:0; border-top:1px solid var(--cream-border);">
+            <?php if ($p > 1): ?>
+                <a href="?p=<?php echo $p-1; ?>&q=<?php echo urlencode($search); ?>&avail=<?php echo urlencode($filterAvail); ?>" class="page-link" style="width:auto; padding:0 15px; margin-right:5px;"><i class="fas fa-chevron-left"></i> Back</a>
+            <?php endif; ?>
+            <?php for ($i = 1; $i <= $totalPages; $i++): ?>
+                <a href="?p=<?php echo $i; ?>&q=<?php echo urlencode($search); ?>&avail=<?php echo urlencode($filterAvail); ?>" class="page-link <?php echo $i == $p ? 'active' : ''; ?>"><?php echo $i; ?></a>
+            <?php endfor; ?>
+            <?php if ($p < $totalPages): ?>
+                <a href="?p=<?php echo $p+1; ?>&q=<?php echo urlencode($search); ?>&avail=<?php echo urlencode($filterAvail); ?>" class="page-link" style="width:auto; padding:0 15px; margin-left:5px;">Next <i class="fas fa-chevron-right"></i></a>
+            <?php endif; ?>
+            <div class="page-info">Showing page <?php echo $p; ?> of <?php echo $totalPages; ?></div>
+        </div>
+        <?php endif; ?>
     </div>
     <?php endif; ?>
 </div>

@@ -205,7 +205,12 @@ require_once 'includes/header.php';
 
         <div class="auth-panel auth-panel--right">
             <div class="auth-panel-inner">
-                <img src="https://images.bukas.ph/images/school-logos/CIT.original.png" alt="" class="panel-logo" style="width: 120px; margin-bottom: 20px;">
+                <div class="auth-logo-placeholder" id="logoPlaceholder" style="display:none; margin-bottom:20px;">
+                    <i class="fas fa-university"></i>
+                </div>
+                <img src="img/citlogo.png" 
+                     alt="" class="panel-logo"
+                     onerror="this.style.display='none'; document.getElementById('logoPlaceholder').style.display='flex';">
                 <div class="panel-brand" style="font-size: 2.5rem; letter-spacing: 5px;">HUWAM</div>
                 <p class="panel-sub">Access your institutional borrowing account.</p>
                 <a href="login.php" class="panel-btn">LOG IN</a>

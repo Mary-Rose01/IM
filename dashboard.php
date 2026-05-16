@@ -34,9 +34,9 @@ $totalItemsCount = $connection->query("SELECT COUNT(*) c FROM tblitem WHERE $whe
 $totalReqsCount  = $connection->query("SELECT COUNT(*) c FROM tblborrowrequest r WHERE $whereReqs")->fetch_assoc()['c'];
 $totalTxCount    = $connection->query("SELECT COUNT(*) c FROM tblborrowtransaction t JOIN tblborrowrequest r ON t.RequestID = r.RequestID WHERE $whereTx")->fetch_assoc()['c'];
 
-$pagesItems = ceil($totalItemsCount / $limit);
-$pagesReqs  = ceil($totalReqsCount / $limit);
-$pagesTx    = ceil($totalTxCount / $limit);
+$pagesItems = max(1, ceil($totalItemsCount / $limit));
+$pagesReqs  = max(1, ceil($totalReqsCount / $limit));
+$pagesTx    = max(1, ceil($totalTxCount / $limit));
 
 $recentItems = $connection->query(
     "SELECT i.ItemID, i.Item_Name, i.Category, i.Availability_Status,
@@ -128,17 +128,18 @@ require_once 'includes/header.php';
         </div>
 
         <!-- Items Pagination -->
-        <?php if ($pagesItems > 1): ?>
-        <div class="pagination" style="margin-top:16px;background:none;padding:0;border:none;">
+        <?php if ($pagesItems >= 1): ?>
+        <div class="pagination" style="margin-top:24px;">
             <?php if ($p_items > 1): ?>
-                <a href="<?php echo pagelink($p_items-1, $p_reqs, $p_tx, $tab_reqs); ?>" class="page-link"><i class="fas fa-chevron-left"></i></a>
+                <a href="<?php echo pagelink($p_items-1, $p_reqs, $p_tx, $tab_reqs); ?>" class="page-link" style="width:auto; padding:0 15px; margin-right:5px;"><i class="fas fa-chevron-left"></i> Back</a>
             <?php endif; ?>
             <?php for ($i = 1; $i <= $pagesItems; $i++): ?>
                 <a href="<?php echo pagelink($i, $p_reqs, $p_tx, $tab_reqs); ?>" class="page-link <?php echo $i == $p_items ? 'active' : ''; ?>"><?php echo $i; ?></a>
             <?php endfor; ?>
             <?php if ($p_items < $pagesItems): ?>
-                <a href="<?php echo pagelink($p_items+1, $p_reqs, $p_tx, $tab_reqs); ?>" class="page-link"><i class="fas fa-chevron-right"></i></a>
+                <a href="<?php echo pagelink($p_items+1, $p_reqs, $p_tx, $tab_reqs); ?>" class="page-link" style="width:auto; padding:0 15px; margin-left:5px;">Next <i class="fas fa-chevron-right"></i></a>
             <?php endif; ?>
+            <div class="page-info">Showing page <?php echo $p_items; ?> of <?php echo $pagesItems; ?></div>
         </div>
         <?php endif; ?>
     </div>
@@ -181,17 +182,18 @@ require_once 'includes/header.php';
         <?php endif; ?>
 
         <!-- Requests Pagination -->
-        <?php if ($pagesReqs > 1): ?>
-        <div class="pagination" style="margin-top:16px;background:none;padding:0;border:none;">
+        <?php if ($pagesReqs >= 1): ?>
+        <div class="pagination" style="margin-top:24px;">
             <?php if ($p_reqs > 1): ?>
-                <a href="<?php echo pagelink($p_items, $p_reqs-1, $p_tx, $tab_reqs); ?>" class="page-link"><i class="fas fa-chevron-left"></i></a>
+                <a href="<?php echo pagelink($p_items, $p_reqs-1, $p_tx, $tab_reqs); ?>" class="page-link" style="width:auto; padding:0 15px; margin-right:5px;"><i class="fas fa-chevron-left"></i> Back</a>
             <?php endif; ?>
             <?php for ($i = 1; $i <= $pagesReqs; $i++): ?>
                 <a href="<?php echo pagelink($p_items, $i, $p_tx, $tab_reqs); ?>" class="page-link <?php echo $i == $p_reqs ? 'active' : ''; ?>"><?php echo $i; ?></a>
             <?php endfor; ?>
             <?php if ($p_reqs < $pagesReqs): ?>
-                <a href="<?php echo pagelink($p_items, $p_reqs+1, $p_tx, $tab_reqs); ?>" class="page-link"><i class="fas fa-chevron-right"></i></a>
+                <a href="<?php echo pagelink($p_items, $p_reqs+1, $p_tx, $tab_reqs); ?>" class="page-link" style="width:auto; padding:0 15px; margin-left:5px;">Next <i class="fas fa-chevron-right"></i></a>
             <?php endif; ?>
+            <div class="page-info">Showing page <?php echo $p_reqs; ?> of <?php echo $pagesReqs; ?></div>
         </div>
         <?php endif; ?>
     </div>
@@ -232,17 +234,18 @@ require_once 'includes/header.php';
         <?php endif; ?>
 
         <!-- Transactions Pagination -->
-        <?php if ($pagesTx > 1): ?>
-        <div class="pagination" style="margin-top:16px;background:none;padding:0;border:none;">
+        <?php if ($pagesTx >= 1): ?>
+        <div class="pagination" style="margin-top:24px;">
             <?php if ($p_tx > 1): ?>
-                <a href="<?php echo pagelink($p_items, $p_reqs, $p_tx-1, $tab_reqs); ?>" class="page-link"><i class="fas fa-chevron-left"></i></a>
+                <a href="<?php echo pagelink($p_items, $p_reqs, $p_tx-1, $tab_reqs); ?>" class="page-link" style="width:auto; padding:0 15px; margin-right:5px;"><i class="fas fa-chevron-left"></i> Back</a>
             <?php endif; ?>
             <?php for ($i = 1; $i <= $pagesTx; $i++): ?>
                 <a href="<?php echo pagelink($p_items, $p_reqs, $i, $tab_reqs); ?>" class="page-link <?php echo $i == $p_tx ? 'active' : ''; ?>"><?php echo $i; ?></a>
             <?php endfor; ?>
             <?php if ($p_tx < $pagesTx): ?>
-                <a href="<?php echo pagelink($p_items, $p_reqs, $p_tx+1, $tab_reqs); ?>" class="page-link"><i class="fas fa-chevron-right"></i></a>
+                <a href="<?php echo pagelink($p_items, $p_reqs, $p_tx+1, $tab_reqs); ?>" class="page-link" style="width:auto; padding:0 15px; margin-left:5px;">Next <i class="fas fa-chevron-right"></i></a>
             <?php endif; ?>
+            <div class="page-info">Showing page <?php echo $p_tx; ?> of <?php echo $pagesTx; ?></div>
         </div>
         <?php endif; ?>
     </div>

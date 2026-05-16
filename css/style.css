@@ -82,6 +82,7 @@ img { max-width: 100%; }
 .navbar-logo {
     height: 32px;
     width: auto;
+    object-fit: contain;
 }
 
 .navbar-brand .brand-huwam {
@@ -450,7 +451,9 @@ input:disabled, select:disabled { background: var(--cream-muted); color: var(--t
 
 /* CIT-U logo placeholder (SVG-based school seal feel) */
 .auth-logo-placeholder {
-    width: 160px; height: 160px;
+    width: 80%;
+    max-width: 220px;
+    aspect-ratio: 1/1;
     margin: 0 auto 28px;
     background: rgba(255,255,255,0.15);
     border-radius: 50%;
@@ -460,7 +463,7 @@ input:disabled, select:disabled { background: var(--cream-muted); color: var(--t
     box-shadow: 0 8px 32px rgba(0,0,0,0.25), inset 0 1px 0 rgba(255,255,255,0.2);
 }
 .auth-logo-placeholder i {
-    font-size: 64px;
+    font-size: 5rem;
     color: rgba(255,255,255,0.9);
 }
 
@@ -665,8 +668,9 @@ body:has(.auth-wrap) {
 }
 
 .panel-logo {
-    width: 120px;
-    height: 120px;
+    width: 80%;
+    max-width: 220px;
+    height: auto;
     object-fit: contain;
     margin-bottom: 20px;
     filter: drop-shadow(0 4px 16px rgba(0,0,0,0.25));
@@ -879,7 +883,7 @@ body:has(.auth-wrap) {
         padding-top: 48px;
     }
 
-    .panel-logo { width: 80px; height: 80px; margin-bottom: 12px; }
+    .panel-logo { width: 50%; max-width: 140px; height: auto; margin-bottom: 12px; }
     .panel-brand { font-size: 32px; }
     .panel-sub { display: none; }
     .panel-btn { display: none; }

@@ -93,10 +93,19 @@ $where = $isAdmin ? '1=1' : "r.UserID = {$_SESSION['user_id']}";
 if ($filterStatus) { $fs=$connection->real_escape_string($filterStatus); $where.=" AND r.Status='$fs'"; }
 if ($search) { $s=$connection->real_escape_string($search); $where.=" AND (u.FirstName LIKE '%$s%' OR u.LastName LIKE '%$s%')"; }
 
+// Pagination Logic
+$limit = 10;
+$p = max(1, intval($_GET['p'] ?? 1));
+$off = ($p - 1) * $limit;
+
+$totalCountResult = $connection->query("SELECT COUNT(*) c FROM tblborrowrequest r JOIN tbluser u ON r.UserID=u.UserID WHERE $where");
+$totalCount = $totalCountResult->fetch_assoc()['c'];
+$totalPages = max(1, ceil($totalCount / $limit));
+
 $requests = $connection->query(
     "SELECT r.*, CONCAT(u.FirstName,' ',u.LastName) as RequesterName
      FROM tblborrowrequest r JOIN tbluser u ON r.UserID=u.UserID
-     WHERE $where ORDER BY r.CreatedAt DESC"
+     WHERE $where ORDER BY r.CreatedAt DESC LIMIT $limit OFFSET $off"
 );
 
 $users = $isAdmin ? $connection->query("SELECT UserID,CONCAT(FirstName,' ',LastName) as Name FROM tbluser WHERE isActive=1 ORDER BY FirstName") : null;
@@ -175,7 +184,7 @@ require_once 'includes/header.php';
 
     <div class="card">
         <div class="card-header">
-            <div><h3>All Requests</h3><p><?php echo $requests->num_rows; ?> request(s)</p></div>
+            <div><h3>All Requests</h3><p><?php echo $totalCount; ?> request(s)</p></div>
             <form method="get" style="display:flex;gap:8px;align-items:center;">
                 <div class="search-bar"><i class="fas fa-search"></i><input type="text" name="q" placeholder="Search requester..." value="<?php echo htmlspecialchars($search); ?>"></div>
                 <select name="status" style="padding:7px 10px;border:1.5px solid var(--gray-300);border-radius:var(--radius-sm);font-size:13px;">
@@ -225,6 +234,22 @@ require_once 'includes/header.php';
                 </tbody>
             </table>
         </div>
+
+        <!-- Pagination UI -->
+        <?php if ($totalPages >= 1): ?>
+        <div class="pagination" style="margin-top:0; border-top:1px solid var(--cream-border);">
+            <?php if ($p > 1): ?>
+                <a href="?p=<?php echo $p-1; ?>&q=<?php echo urlencode($search); ?>&status=<?php echo urlencode($filterStatus); ?>" class="page-link" style="width:auto; padding:0 15px; margin-right:5px;"><i class="fas fa-chevron-left"></i> Back</a>
+            <?php endif; ?>
+            <?php for ($i = 1; $i <= $totalPages; $i++): ?>
+                <a href="?p=<?php echo $i; ?>&q=<?php echo urlencode($search); ?>&status=<?php echo urlencode($filterStatus); ?>" class="page-link <?php echo $i == $p ? 'active' : ''; ?>"><?php echo $i; ?></a>
+            <?php endfor; ?>
+            <?php if ($p < $totalPages): ?>
+                <a href="?p=<?php echo $p+1; ?>&q=<?php echo urlencode($search); ?>&status=<?php echo urlencode($filterStatus); ?>" class="page-link" style="width:auto; padding:0 15px; margin-left:5px;">Next <i class="fas fa-chevron-right"></i></a>
+            <?php endif; ?>
+            <div class="page-info">Showing page <?php echo $p; ?> of <?php echo $totalPages; ?></div>
+        </div>
+        <?php endif; ?>
     </div>
 </div>
 </div>

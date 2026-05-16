@@ -59,9 +59,19 @@ if ($search) {
     $s = $connection->real_escape_string($search);
     $where = "WHERE s.StudentID LIKE '%$s%' OR u.FirstName LIKE '%$s%' OR u.LastName LIKE '%$s%' OR s.Program LIKE '%$s%'";
 }
+
+// Pagination Logic
+$limit = 10;
+$p = max(1, intval($_GET['p'] ?? 1));
+$off = ($p - 1) * $limit;
+
+$totalCountResult = $connection->query("SELECT COUNT(*) c FROM tblstudent s JOIN tbluser u ON s.UserID = u.UserID $where");
+$totalCount = $totalCountResult->fetch_assoc()['c'];
+$totalPages = max(1, ceil($totalCount / $limit));
+
 $students = $connection->query(
     "SELECT s.*, CONCAT(u.FirstName,' ',u.MiddleName,' ',u.LastName) as FullName, u.Institutional_Email
-     FROM tblstudent s JOIN tbluser u ON s.UserID = u.UserID $where ORDER BY s.StudentID"
+     FROM tblstudent s JOIN tbluser u ON s.UserID = u.UserID $where ORDER BY s.StudentID LIMIT $limit OFFSET $off"
 );
 
 // Available users (for add)
@@ -161,7 +171,7 @@ require_once 'includes/header.php';
     <?php if ($action === 'list'): ?>
     <div class="card">
         <div class="card-header">
-            <div><h3>All Students</h3><p><?php echo $students ? $students->num_rows : 0; ?> student(s)</p></div>
+            <div><h3>All Students</h3><p><?php echo $totalCount; ?> student(s)</p></div>
             <form method="get" style="display:flex;gap:8px;">
                 <div class="search-bar"><i class="fas fa-search"></i>
                     <input type="text" name="q" placeholder="Search..." value="<?php echo htmlspecialchars($search); ?>">
@@ -204,6 +214,22 @@ require_once 'includes/header.php';
                 </tbody>
             </table>
         </div>
+
+        <!-- Pagination UI -->
+        <?php if ($totalPages >= 1): ?>
+        <div class="pagination" style="margin-top:0; border-top:1px solid var(--cream-border);">
+            <?php if ($p > 1): ?>
+                <a href="?p=<?php echo $p-1; ?>&q=<?php echo urlencode($search); ?>" class="page-link" style="width:auto; padding:0 15px; margin-right:5px;"><i class="fas fa-chevron-left"></i> Back</a>
+            <?php endif; ?>
+            <?php for ($i = 1; $i <= $totalPages; $i++): ?>
+                <a href="?p=<?php echo $i; ?>&q=<?php echo urlencode($search); ?>" class="page-link <?php echo $i == $p ? 'active' : ''; ?>"><?php echo $i; ?></a>
+            <?php endfor; ?>
+            <?php if ($p < $totalPages): ?>
+                <a href="?p=<?php echo $p+1; ?>&q=<?php echo urlencode($search); ?>" class="page-link" style="width:auto; padding:0 15px; margin-left:5px;">Next <i class="fas fa-chevron-right"></i></a>
+            <?php endif; ?>
+            <div class="page-info">Showing page <?php echo $p; ?> of <?php echo $totalPages; ?></div>
+        </div>
+        <?php endif; ?>
     </div>
     <?php endif; ?>
 </div>

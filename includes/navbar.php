@@ -5,7 +5,6 @@ $isAdmin = isset($_SESSION['role']) && $_SESSION['role'] === 'admin';
 ?>
 <nav class="navbar">
     <a href="<?php echo isLoggedIn() ? 'dashboard.php' : 'index.php'; ?>" class="navbar-brand">
-        <img src="https://images.bukas.ph/images/school-logos/CIT.original.png" alt="" class="navbar-logo">
         <span class="brand-huwam">HUWAM</span>
     </a>
 
