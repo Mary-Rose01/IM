@@ -112,10 +112,22 @@ if ($action === 'view' && isset($_GET['id'])) {
 }
 
 // List
-$search = trim($_GET['q'] ?? '');
+$search     = trim($_GET['q'] ?? '');
 $filterAvail = $_GET['avail'] ?? '';
 $filterCat   = $_GET['cat'] ?? '';
-$where = $isAdmin ? '1=1' : "i.Availability_Status != 'Archived'";
+$viewMine    = isset($_GET['view']) && $_GET['view'] === 'mine';
+
+// Browse mode: show all non-archived items from everyone.
+// My Items mode (view=mine): show only items the logged-in user owns.
+// Admin: always sees everything regardless of mode.
+if ($isAdmin) {
+    $where = '1=1';
+} elseif ($viewMine) {
+    $where = "i.OwnerUserID = {$_SESSION['user_id']} AND i.Availability_Status != 'Archived'";
+} else {
+    $where = "i.Availability_Status != 'Archived'";
+}
+
 if ($search)      { $s  = $connection->real_escape_string($search);      $where .= " AND (i.Item_Name LIKE '%$s%' OR i.Category LIKE '%$s%' OR i.Description LIKE '%$s%')"; }
 if ($filterAvail) { $fa = $connection->real_escape_string($filterAvail); $where .= " AND i.Availability_Status = '$fa'"; }
 if ($filterCat)   { $fc = $connection->real_escape_string($filterCat);   $where .= " AND i.Category = '$fc'"; }
@@ -146,10 +158,15 @@ require_once 'includes/header.php';
 <div class="page-wrapper">
 
 <div class="page-header">
-    <div class="page-title"><h1>Item Catalog</h1><p>Browse and manage borrowable items</p></div>
+    <div class="page-title">
+        <h1><?php echo $viewMine ? 'My Items' : 'Browse Items'; ?></h1>
+        <p><?php echo $viewMine ? 'Items you have listed for borrowing' : 'All items available to borrow'; ?></p>
+    </div>
     <?php if ($action !== 'add' && $action !== 'edit'): ?>
-    <div style="display:flex;gap:10px;">
-        <a href="?action=add" class="btn btn-primary btn-sm"><i class="fas fa-plus"></i> Add Item</a>
+    <div style="display:flex;gap:10px;flex-wrap:wrap;">
+        <a href="items.php" class="btn <?php echo !$viewMine ? 'btn-primary' : 'btn-outline'; ?> btn-sm"><i class="fas fa-th"></i> Browse All</a>
+        <a href="?view=mine" class="btn <?php echo $viewMine ? 'btn-primary' : 'btn-outline'; ?> btn-sm"><i class="fas fa-box"></i> My Items</a>
+        <a href="?action=add" class="btn btn-outline btn-sm"><i class="fas fa-plus"></i> Add Item</a>
         <a href="slots.php" class="btn btn-outline btn-sm"><i class="fas fa-calendar-plus"></i> Manage Slots</a>
     </div>
     <?php endif; ?>
@@ -220,8 +237,12 @@ require_once 'includes/header.php';
                         <input type="file" name="itemImage" accept="image/jpeg,image/png,image/webp,image/gif" style="padding:6px;">
                     </div>
                 </div>
-                <div style="margin-top:20px;display:flex;gap:10px;">
+                <div style="margin-top:20px;display:flex;gap:10px;flex-wrap:wrap;">
                     <button type="button" onclick="validateAndShowModal()" class="btn btn-primary"><i class="fas fa-save"></i> Save Item</button>
+                    <?php if ($action === 'edit' && isset($editRow['ItemID'])): ?>
+                    <a href="slots.php?action=add&item_id=<?php echo $editRow['ItemID']; ?>" class="btn btn-outline"><i class="fas fa-calendar-plus"></i> Add Slot</a>
+                    <a href="slots.php?item_id_filter=<?php echo $editRow['ItemID']; ?>" class="btn btn-outline"><i class="fas fa-calendar"></i> View Slots</a>
+                    <?php endif; ?>
                     <button type="button" onclick="showConfirmModal('items.php', 'Discard Changes', 'Are you sure you want to leave? Any unsaved changes will be lost.')" class="btn btn-outline">Cancel</button>
                 </div>
             </form>
@@ -285,6 +306,7 @@ require_once 'includes/header.php';
         <div class="card-header">
             <div><h3>Item Catalog</h3><p><?php echo $totalCount; ?> item(s)</p></div>
             <form method="get" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+                <?php if ($viewMine): ?><input type="hidden" name="view" value="mine"><?php endif; ?>
                 <div class="search-bar"><i class="fas fa-search"></i>
                     <input type="text" name="q" placeholder="Search items..." value="<?php echo htmlspecialchars($search); ?>">
                 </div>
@@ -360,13 +382,13 @@ require_once 'includes/header.php';
         <?php if ($totalPages >= 1): ?>
         <div class="pagination" style="margin-top:0; border-top:1px solid var(--cream-border);">
             <?php if ($p > 1): ?>
-                <a href="?p=<?php echo $p-1; ?>&q=<?php echo urlencode($search); ?>&avail=<?php echo urlencode($filterAvail); ?>&cat=<?php echo urlencode($filterCat); ?>" class="page-link" style="width:auto; padding:0 15px; margin-right:5px;"><i class="fas fa-chevron-left"></i> Back</a>
+                <a href="?p=<?php echo $p-1; ?>&q=<?php echo urlencode($search); ?>&avail=<?php echo urlencode($filterAvail); ?>&cat=<?php echo urlencode($filterCat); ?><?php echo $viewMine?'&view=mine':''; ?>" class="page-link" style="width:auto; padding:0 15px; margin-right:5px;"><i class="fas fa-chevron-left"></i> Back</a>
             <?php endif; ?>
             <?php for ($i = 1; $i <= $totalPages; $i++): ?>
-                <a href="?p=<?php echo $i; ?>&q=<?php echo urlencode($search); ?>&avail=<?php echo urlencode($filterAvail); ?>&cat=<?php echo urlencode($filterCat); ?>" class="page-link <?php echo $i == $p ? 'active' : ''; ?>"><?php echo $i; ?></a>
+                <a href="?p=<?php echo $i; ?>&q=<?php echo urlencode($search); ?>&avail=<?php echo urlencode($filterAvail); ?>&cat=<?php echo urlencode($filterCat); ?><?php echo $viewMine?'&view=mine':''; ?>" class="page-link <?php echo $i == $p ? 'active' : ''; ?>"><?php echo $i; ?></a>
             <?php endfor; ?>
             <?php if ($p < $totalPages): ?>
-                <a href="?p=<?php echo $p+1; ?>&q=<?php echo urlencode($search); ?>&avail=<?php echo urlencode($filterAvail); ?>&cat=<?php echo urlencode($filterCat); ?>" class="page-link" style="width:auto; padding:0 15px; margin-left:5px;">Next <i class="fas fa-chevron-right"></i></a>
+                <a href="?p=<?php echo $p+1; ?>&q=<?php echo urlencode($search); ?>&avail=<?php echo urlencode($filterAvail); ?>&cat=<?php echo urlencode($filterCat); ?><?php echo $viewMine?'&view=mine':''; ?>" class="page-link" style="width:auto; padding:0 15px; margin-left:5px;">Next <i class="fas fa-chevron-right"></i></a>
             <?php endif; ?>
             <div class="page-info">Showing page <?php echo $p; ?> of <?php echo $totalPages; ?></div>
         </div>

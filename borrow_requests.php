@@ -27,14 +27,38 @@ if ($action === 'status' && isset($_GET['id']) && isset($_GET['s'])) {
     $id = intval($_GET['id']);
     $s  = $connection->real_escape_string($_GET['s']);
     $now = date('Y-m-d H:i:s');
+
+    // Load the request's booking → slot → item chain
+    $chain = $connection->query(
+        "SELECT r.UserID, b.SlotID, s.ItemID
+         FROM tblborrowrequest r
+         JOIN tblbooking b ON r.BookingID = b.BookingID
+         JOIN tblavailabilityslot s ON b.SlotID = s.SlotID
+         WHERE r.RequestID = $id"
+    )->fetch_assoc();
+
     $connection->query("UPDATE tblborrowrequest SET Status='$s', ReviewedAt='$now' WHERE RequestID=$id");
 
-    // Notify the requester
-    $reqRow = $connection->query("SELECT UserID FROM tblborrowrequest WHERE RequestID=$id")->fetch_assoc();
-    if ($reqRow) {
+    if ($chain) {
+        $slotID = intval($chain['SlotID']);
+        $itemID = intval($chain['ItemID']);
+
+        // Fix 2 & 3: update slot and item availability based on new status
+        if ($s === 'Approved') {
+            // Mark slot as reserved so no one else can book it
+            $connection->query("UPDATE tblavailabilityslot SET isReserved=1 WHERE SlotID=$slotID");
+            // Mark item as Reserved in the catalog
+            $connection->query("UPDATE tblitem SET Availability_Status='Reserved' WHERE ItemID=$itemID");
+        } elseif (in_array($s, ['Rejected', 'Cancelled'])) {
+            // Release slot and item back to available
+            $connection->query("UPDATE tblavailabilityslot SET isReserved=0 WHERE SlotID=$slotID");
+            $connection->query("UPDATE tblitem SET Availability_Status='Available' WHERE ItemID=$itemID");
+        }
+
+        // Notify the requester
         $notifMsg = $connection->real_escape_string("Your borrow request #$id has been $s.");
-        $notifLink = $connection->real_escape_string("borrow_requests.php?q=&status=$s");
-        $connection->query("INSERT INTO tblnotification (UserID, Message, Link) VALUES ({$reqRow['UserID']}, '$notifMsg', '$notifLink')");
+        $notifLink = $connection->real_escape_string("borrow_requests.php?status=$s");
+        $connection->query("INSERT INTO tblnotification (UserID, Message, Link) VALUES ({$chain['UserID']}, '$notifMsg', '$notifLink')");
     }
 
     $msg = "Request marked as $s.";
@@ -45,44 +69,95 @@ if ($action === 'status' && isset($_GET['id']) && isset($_GET['s'])) {
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $id      = intval($_POST['hdnID'] ?? 0);
     $userID  = $isAdmin ? intval($_POST['hdnUser'] ?? $_SESSION['user_id']) : $_SESSION['user_id'];
-    $bookID  = intval($_POST['hdnBooking'] ?? 1);
+    $bookID  = intval($_POST['hdnBooking'] ?? 0); // Fix 1: default 0, not 1
     $start   = trim($_POST['txtstart'] ?? '');
     $end     = trim($_POST['txtend'] ?? '');
     $status  = trim($_POST['txtstatus'] ?? 'Pending');
 
-    // Validation: Ensure requested time is not in the past and end is after start
     $now = time();
-    if (strtotime($start) < ($now - 60)) { // 60s grace period for form submission
-        $msg = 'Requested start time cannot be in the past.';
+
+    // Fix 1: reject if booking ID is missing or zero
+    if ($id === 0 && $bookID <= 0) {
+        $msg = 'No booking slot selected. Please select an item and time slot.';
         $msgType = 'danger';
-        $action = ($id === 0) ? 'add' : 'edit';
-    } elseif (strtotime($end) <= strtotime($start)) {
-        $msg = 'Requested end time must be after the start time.';
-        $msgType = 'danger';
-        $action = ($id === 0) ? 'add' : 'edit';
-    } elseif ($id === 0) {
-        $stmt = $connection->prepare("INSERT INTO tblborrowrequest (UserID,BookingID,Requested_Start,Requested_End,Status) VALUES (?,?,?,?,?)");
-        $stmt->bind_param('iisss', $userID,$bookID,$start,$end,$status);
-        if ($stmt->execute()) $msg = 'Borrow request created.';
-        else { $msg = $stmt->error; $msgType='danger'; }
-        $stmt->close();
-        $action = 'list';
-    } else {
-        // Security Check: Admin or Requester
-        $check = $connection->query("SELECT UserID FROM tblborrowrequest WHERE RequestID = $id")->fetch_assoc();
-        if ($isAdmin || ($check && $check['UserID'] == $_SESSION['user_id'])) {
-            $stmt = $connection->prepare("UPDATE tblborrowrequest SET Requested_Start=?,Requested_End=?,Status=? WHERE RequestID=?");
-            $stmt->bind_param('sssi', $start,$end,$status,$id);
-            if ($stmt->execute()) $msg = 'Request updated.';
-            else { $msg = $stmt->error; $msgType='danger'; }
-            $stmt->close();
-        } else {
-            $msg = 'Permission denied.';
+        $action = 'add';
+    // Fix 6: verify booking belongs to the submitting user (prevent hijack)
+    } elseif ($id === 0 && !$isAdmin) {
+        $bCheck = $connection->query("SELECT UserID FROM tblbooking WHERE BookingID = $bookID")->fetch_assoc();
+        if (!$bCheck || $bCheck['UserID'] != $userID) {
+            $msg = 'Invalid booking. Please start the request again.';
             $msgType = 'danger';
+            $action = 'add';
+        // Fix 5: prevent self-borrow (server-side)
+        } else {
+            $selfCheck = $connection->query(
+                "SELECT i.OwnerUserID FROM tblbooking b
+                 JOIN tblavailabilityslot s ON b.SlotID = s.SlotID
+                 JOIN tblitem i ON s.ItemID = i.ItemID
+                 WHERE b.BookingID = $bookID"
+            )->fetch_assoc();
+            if ($selfCheck && $selfCheck['OwnerUserID'] == $userID) {
+                $msg = 'You cannot borrow your own item.';
+                $msgType = 'danger';
+                $action = 'add';
+            }
         }
-        $action = 'list';
     }
-}
+
+    if (empty($msg)) {
+        if (strtotime($start) < ($now - 60)) {
+            $msg = 'Requested start time cannot be in the past.';
+            $msgType = 'danger';
+            $action = ($id === 0) ? 'add' : 'edit';
+        } elseif (strtotime($end) <= strtotime($start)) {
+            $msg = 'Requested end time must be after the start time.';
+            $msgType = 'danger';
+            $action = ($id === 0) ? 'add' : 'edit';
+        } elseif ($id === 0) {
+            $stmt = $connection->prepare("INSERT INTO tblborrowrequest (UserID,BookingID,Requested_Start,Requested_End,Status) VALUES (?,?,?,?,?)");
+            $stmt->bind_param('iisss', $userID,$bookID,$start,$end,$status);
+            if ($stmt->execute()) {
+                $msg = 'Borrow request created.';
+                $newRequestID = $connection->insert_id;
+                // Notify the item owner that someone wants to borrow their item
+                $ownerRow = $connection->query(
+                    "SELECT i.OwnerUserID, i.Item_Name, CONCAT(u.FirstName,' ',u.LastName) as RequesterName
+                     FROM tblbooking b
+                     JOIN tblavailabilityslot s ON b.SlotID = s.SlotID
+                     JOIN tblitem i ON s.ItemID = i.ItemID
+                     JOIN tbluser u ON u.UserID = $userID
+                     WHERE b.BookingID = $bookID"
+                )->fetch_assoc();
+                if ($ownerRow && $ownerRow['OwnerUserID'] != $userID) {
+                    $notifMsg = $connection->real_escape_string(
+                        "{$ownerRow['RequesterName']} wants to borrow your item \"{$ownerRow['Item_Name']}\" (Request #$newRequestID)."
+                    );
+                    $notifLink = $connection->real_escape_string("borrow_requests.php");
+                    $ownerID = intval($ownerRow['OwnerUserID']);
+                    $connection->query("INSERT INTO tblnotification (UserID, Message, Link) VALUES ($ownerID, '$notifMsg', '$notifLink')");
+                }
+            } else {
+                $msg = $stmt->error; $msgType='danger';
+            }
+            $stmt->close();
+            $action = 'list';
+        } else {
+            $check = $connection->query("SELECT UserID FROM tblborrowrequest WHERE RequestID = $id")->fetch_assoc();
+            if ($isAdmin || ($check && $check['UserID'] == $_SESSION['user_id'])) {
+                $stmt = $connection->prepare("UPDATE tblborrowrequest SET Requested_Start=?,Requested_End=?,Status=? WHERE RequestID=?");
+                $stmt->bind_param('sssi', $start,$end,$status,$id);
+                if ($stmt->execute()) $msg = 'Request updated.';
+                else { $msg = $stmt->error; $msgType='danger'; }
+                $stmt->close();
+            } else {
+                $msg = 'Permission denied.';
+                $msgType = 'danger';
+            }
+            $action = 'list';
+        }
+    }
+} // end if (empty($msg))
+ // end if (POST)
 
 $editRow = null;
 if ($action === 'edit' && isset($_GET['id'])) {
@@ -109,22 +184,41 @@ $preItemID = intval($_GET['item_id'] ?? 0);
 // List
 $search = trim($_GET['q'] ?? '');
 $filterStatus = $_GET['status'] ?? '';
-$where = $isAdmin ? '1=1' : "r.UserID = {$_SESSION['user_id']}";
+// Admin: all requests. Item owner: their own requests + requests for their items.
+// Student: only their own requests.
+if ($isAdmin) {
+    $where = '1=1';
+} else {
+    $uid = $_SESSION['user_id'];
+    $where = "(r.UserID = $uid OR i.OwnerUserID = $uid)";
+}
 if ($filterStatus) { $fs=$connection->real_escape_string($filterStatus); $where.=" AND r.Status='$fs'"; }
-if ($search) { $s=$connection->real_escape_string($search); $where.=" AND (u.FirstName LIKE '%$s%' OR u.LastName LIKE '%$s%')"; }
+if ($search) { $sq=$connection->real_escape_string($search); $where.=" AND (u.FirstName LIKE '%$sq%' OR u.LastName LIKE '%$sq%')"; }
 
 // Pagination Logic
 $limit = 10;
 $p = max(1, intval($_GET['p'] ?? 1));
 $off = ($p - 1) * $limit;
 
-$totalCountResult = $connection->query("SELECT COUNT(*) c FROM tblborrowrequest r JOIN tbluser u ON r.UserID=u.UserID WHERE $where");
+$totalCountResult = $connection->query(
+    "SELECT COUNT(*) c FROM tblborrowrequest r
+     JOIN tbluser u ON r.UserID = u.UserID
+     LEFT JOIN tblbooking b ON r.BookingID = b.BookingID
+     LEFT JOIN tblavailabilityslot s ON b.SlotID = s.SlotID
+     LEFT JOIN tblitem i ON s.ItemID = i.ItemID
+     WHERE $where"
+);
 $totalCount = $totalCountResult->fetch_assoc()['c'];
 $totalPages = max(1, ceil($totalCount / $limit));
 
 $requests = $connection->query(
-    "SELECT r.*, CONCAT(u.FirstName,' ',u.LastName) as RequesterName
-     FROM tblborrowrequest r JOIN tbluser u ON r.UserID=u.UserID
+    "SELECT r.*, CONCAT(u.FirstName,' ',u.LastName) as RequesterName,
+            i.Item_Name, i.OwnerUserID
+     FROM tblborrowrequest r
+     JOIN tbluser u ON r.UserID = u.UserID
+     LEFT JOIN tblbooking b ON r.BookingID = b.BookingID
+     LEFT JOIN tblavailabilityslot s ON b.SlotID = s.SlotID
+     LEFT JOIN tblitem i ON s.ItemID = i.ItemID
      WHERE $where ORDER BY r.CreatedAt DESC LIMIT $limit OFFSET $off"
 );
 
@@ -259,13 +353,14 @@ require_once 'includes/header.php';
         <div class="table-wrapper">
             <table class="data-table">
                 <thead>
-                    <tr><th>#</th><th>Requester</th><th>Requested Period</th><th>Status</th><th>Reviewed At</th><th>Created</th><th>Actions</th></tr>
+                    <tr><th>#</th><th>Requester</th><th>Item</th><th>Requested Period</th><th>Status</th><th>Reviewed At</th><th>Created</th><th>Actions</th></tr>
                 </thead>
                 <tbody>
                     <?php if ($requests->num_rows > 0): while($row=$requests->fetch_assoc()): ?>
                     <tr>
                         <td class="mono">#<?php echo $row['RequestID']; ?></td>
                         <td style="font-weight:600;"><?php echo htmlspecialchars($row['RequesterName']); ?></td>
+                        <td style="font-size:12px;"><?php echo $row['Item_Name'] ? htmlspecialchars($row['Item_Name']) : '—'; ?></td>
                         <td style="font-size:12px;">
                             <div><?php echo date('M j, Y g:i A', strtotime($row['Requested_Start'])); ?></div>
                             <div style="color:var(--gray-400);">→ <?php echo date('M j, Y g:i A', strtotime($row['Requested_End'])); ?></div>
@@ -277,18 +372,22 @@ require_once 'includes/header.php';
                         <td style="font-size:12px;color:var(--gray-500);"><?php echo $row['ReviewedAt'] ? date('M j, Y', strtotime($row['ReviewedAt'])) : '—'; ?></td>
                         <td style="font-size:12px;color:var(--gray-500);"><?php echo date('M j, Y', strtotime($row['CreatedAt'])); ?></td>
                         <td style="display:flex;gap:4px;flex-wrap:wrap;">
-                            <?php if ($isAdmin && $row['Status'] === 'Pending'): ?>
-                            <button type="button" onclick="showConfirmModal('?action=status&id=<?php echo $row['RequestID']; ?>&s=Approved', 'Approve Request', 'Do you want to approve this borrow request?', 'btn-primary')" class="btn btn-success btn-sm"><i class="fas fa-check"></i></button>
-                            <button type="button" onclick="showConfirmModal('?action=status&id=<?php echo $row['RequestID']; ?>&s=Rejected', 'Decline Request', 'Are you sure you want to decline this request?', 'btn-outline')" class="btn btn-danger btn-sm"><i class="fas fa-xmark"></i></button>
+                            <?php
+                            $canApprove = $isAdmin || ($row['OwnerUserID'] == $_SESSION['user_id']);
+                            if ($canApprove && $row['Status'] === 'Pending'): ?>
+                            <button type="button" onclick="showConfirmModal('?action=status&id=<?php echo $row['RequestID']; ?>&s=Approved', 'Approve Request', 'Do you want to approve this borrow request?', 'btn-primary')" class="btn btn-success btn-sm"><i class="fas fa-check"></i> Approve</button>
+                            <button type="button" onclick="showConfirmModal('?action=status&id=<?php echo $row['RequestID']; ?>&s=Rejected', 'Decline Request', 'Are you sure you want to decline this request?', 'btn-outline')" class="btn btn-danger btn-sm"><i class="fas fa-xmark"></i> Reject</button>
                             <?php endif; ?>
+                            <?php if ($row['UserID'] == $_SESSION['user_id']): ?>
                             <a href="?action=edit&id=<?php echo $row['RequestID']; ?>" class="btn btn-outline btn-sm"><i class="fas fa-pen"></i></a>
+                            <?php endif; ?>
                             <?php if ($isAdmin): ?>
                             <button type="button" onclick="showConfirmModal('?action=delete&id=<?php echo $row['RequestID']; ?>', 'Delete Request', 'Are you sure you want to delete this borrow request? This action cannot be undone.')" class="btn btn-danger btn-sm"><i class="fas fa-trash"></i></button>
                             <?php endif; ?>
                         </td>
                     </tr>
                     <?php endwhile; else: ?>
-                    <tr><td colspan="7"><div class="empty-state"><i class="fas fa-hand-holding-box"></i><h3>No borrow requests yet</h3></div></td></tr>
+                    <tr><td colspan="8"><div class="empty-state"><i class="fas fa-hand-holding-box"></i><h3>No borrow requests yet</h3></div></td></tr>
                     <?php endif; ?>
                 </tbody>
             </table>

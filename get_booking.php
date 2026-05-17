@@ -35,6 +35,28 @@ if (!$slot) {
     exit;
 }
 
+// Block: slot is already reserved
+if ($slot['isReserved']) {
+    echo json_encode(['error' => 'This slot has already been reserved by another student.']);
+    exit;
+}
+
+// Block: student trying to borrow their own item
+$ownerStmt = $connection->prepare(
+    "SELECT i.OwnerUserID FROM tblitem i
+     JOIN tblavailabilityslot s ON s.ItemID = i.ItemID
+     WHERE s.SlotID = ?"
+);
+$ownerStmt->bind_param('i', $slotID);
+$ownerStmt->execute();
+$ownerRow = $ownerStmt->get_result()->fetch_assoc();
+$ownerStmt->close();
+
+if ($ownerRow && $ownerRow['OwnerUserID'] == $uid) {
+    echo json_encode(['error' => 'You cannot borrow your own item.']);
+    exit;
+}
+
 // Check if student already has a Pending booking for this slot
 $checkStmt = $connection->prepare(
     "SELECT BookingID FROM tblbooking WHERE UserID = ? AND SlotID = ? AND Status = 'Pending'"

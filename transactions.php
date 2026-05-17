@@ -38,13 +38,27 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if ($id === 0) {
         $stmt = $connection->prepare("INSERT INTO tblborrowtransaction (RequestID,Release_DateTime,ExpectedReturn_DateTime,ActualReturn_DateTime,Condition_On_Release,Condition_On_Return,Status) VALUES (?,?,?,?,?,?,?)");
         $stmt->bind_param('issssss', $reqID,$release,$expected,$actual,$condR,$condRet,$status);
-        if ($stmt->execute()) $msg = 'Transaction created.';
-        else { $msg = $stmt->error; $msgType='danger'; }
+        if ($stmt->execute()) {
+            $msg = 'Transaction created.';
+            // Fix 3: flip item to Borrowed now that it has been physically released
+            $itemRow = $connection->query(
+                "SELECT s.ItemID FROM tblborrowrequest r
+                 JOIN tblbooking b ON r.BookingID = b.BookingID
+                 JOIN tblavailabilityslot s ON b.SlotID = s.SlotID
+                 WHERE r.RequestID = $reqID"
+            )->fetch_assoc();
+            if ($itemRow) {
+                $iid = intval($itemRow['ItemID']);
+                $connection->query("UPDATE tblitem SET Availability_Status='Borrowed' WHERE ItemID=$iid");
+            }
+        } else {
+            $msg = $stmt->error; $msgType='danger';
+        }
         $stmt->close();
     } else {
         // Security Check for updating: Admin or Item Owner
         $check = $connection->query(
-            "SELECT i.OwnerUserID
+            "SELECT i.OwnerUserID, i.ItemID
              FROM tblborrowtransaction t
              LEFT JOIN tblborrowrequest r ON t.RequestID = r.RequestID
              LEFT JOIN tblbooking b ON r.BookingID = b.BookingID
@@ -56,8 +70,27 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         if ($isAdmin || ($check && $check['OwnerUserID'] == $_SESSION['user_id'])) {
             $stmt = $connection->prepare("UPDATE tblborrowtransaction SET ActualReturn_DateTime=?,Condition_On_Return=?,Status=? WHERE TransactionID=?");
             $stmt->bind_param('sssi', $actual,$condRet,$status,$id);
-            if ($stmt->execute()) $msg = 'Transaction updated.';
-            else { $msg = $stmt->error; $msgType='danger'; }
+            if ($stmt->execute()) {
+                $msg = 'Transaction updated.';
+                // Fix 3: if item is returned, flip back to Available and release the slot
+                if ($status === 'Returned' && $check && $check['ItemID']) {
+                    $iid = intval($check['ItemID']);
+                    $connection->query("UPDATE tblitem SET Availability_Status='Available' WHERE ItemID=$iid");
+                    // Also release the slot so it can be reused
+                    $slotRow = $connection->query(
+                        "SELECT b.SlotID FROM tblborrowtransaction t
+                         JOIN tblborrowrequest r ON t.RequestID = r.RequestID
+                         JOIN tblbooking b ON r.BookingID = b.BookingID
+                         WHERE t.TransactionID = $id"
+                    )->fetch_assoc();
+                    if ($slotRow) {
+                        $sid = intval($slotRow['SlotID']);
+                        $connection->query("UPDATE tblavailabilityslot SET isReserved=0 WHERE SlotID=$sid");
+                    }
+                }
+            } else {
+                $msg = $stmt->error; $msgType='danger';
+            }
             $stmt->close();
         } else {
             $msg = 'Permission denied.';
