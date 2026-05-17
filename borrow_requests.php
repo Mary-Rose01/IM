@@ -28,6 +28,15 @@ if ($action === 'status' && isset($_GET['id']) && isset($_GET['s'])) {
     $s  = $connection->real_escape_string($_GET['s']);
     $now = date('Y-m-d H:i:s');
     $connection->query("UPDATE tblborrowrequest SET Status='$s', ReviewedAt='$now' WHERE RequestID=$id");
+
+    // Notify the requester
+    $reqRow = $connection->query("SELECT UserID FROM tblborrowrequest WHERE RequestID=$id")->fetch_assoc();
+    if ($reqRow) {
+        $notifMsg = $connection->real_escape_string("Your borrow request #$id has been $s.");
+        $notifLink = $connection->real_escape_string("borrow_requests.php?q=&status=$s");
+        $connection->query("INSERT INTO tblnotification (UserID, Message, Link) VALUES ({$reqRow['UserID']}, '$notifMsg', '$notifLink')");
+    }
+
     $msg = "Request marked as $s.";
     $action = 'list';
 }
@@ -86,6 +95,17 @@ if ($action === 'edit' && isset($_GET['id'])) {
     }
 }
 
+// For Add form: load available items
+$availableItems = $connection->query(
+    "SELECT i.ItemID, i.Item_Name, i.Category
+     FROM tblitem i
+     WHERE i.Availability_Status = 'Available'
+     ORDER BY i.Item_Name"
+);
+
+// Pre-selected item (from items.php "Request to Borrow" button)
+$preItemID = intval($_GET['item_id'] ?? 0);
+
 // List
 $search = trim($_GET['q'] ?? '');
 $filterStatus = $_GET['status'] ?? '';
@@ -128,32 +148,69 @@ require_once 'includes/header.php';
     <?php endif; ?>
 
     <?php if ($action === 'add' || $action === 'edit'): ?>
-    <div class="card" style="max-width:620px;margin-bottom:24px;">
+    <div class="card" style="max-width:640px;margin-bottom:24px;">
         <div class="card-header">
-            <div><h3><?php echo $action==='edit'?'Edit Request':'New Borrow Request'; ?></h3></div>
+            <div><h3><?php echo $action==='edit'?'Edit Request':'New Borrow Request'; ?></h3>
+            <?php if ($action === 'add'): ?><p style="margin-top:2px;font-size:12px;color:var(--text-muted);">Select an item, then pick an available time slot.</p><?php endif; ?>
+            </div>
         </div>
         <div class="card-body">
             <form method="post" id="requestForm">
                 <input type="hidden" name="hdnID" value="<?php echo $editRow['RequestID'] ?? 0; ?>">
+                <input type="hidden" name="hdnBooking" id="hdnBooking" value="<?php echo $editRow['BookingID'] ?? ''; ?>">
+
+                <?php if ($action === 'add'): ?>
+                <div class="form-group" style="margin-bottom:16px;">
+                    <label>1. Select Item <span class="required">*</span></label>
+                    <select id="itemSelect" style="width:100%;padding:9px 12px;border:1.5px solid var(--gray-300);border-radius:var(--radius-sm);font-size:13px;">
+                        <option value="">— Choose an available item —</option>
+                        <?php if ($availableItems && $availableItems->num_rows > 0):
+                            while ($itm = $availableItems->fetch_assoc()): ?>
+                        <option value="<?php echo $itm['ItemID']; ?>" <?php echo $preItemID === intval($itm['ItemID']) ? 'selected' : ''; ?>>
+                            <?php echo htmlspecialchars($itm['Item_Name']); ?> <?php echo $itm['Category'] ? '('.$itm['Category'].')' : ''; ?>
+                        </option>
+                        <?php endwhile; else: ?>
+                        <option disabled>No items with open slots available</option>
+                        <?php endif; ?>
+                    </select>
+                </div>
+
+                <div class="form-group" id="slotGroup" style="margin-bottom:16px;display:<?php echo $preItemID ? 'block' : 'none'; ?>;">
+                    <label>2. Select Availability Slot <span class="required">*</span></label>
+                    <select id="slotSelect" style="width:100%;padding:9px 12px;border:1.5px solid var(--gray-300);border-radius:var(--radius-sm);font-size:13px;">
+                        <option value="">— Choose a slot —</option>
+                    </select>
+                </div>
+
+                <div id="bookingChip" style="display:none;margin-bottom:16px;padding:10px 14px;background:var(--cream);border:1px solid var(--cream-border);border-radius:var(--radius-sm);font-size:13px;">
+                    <i class="fas fa-calendar-check" style="color:var(--maroon);margin-right:6px;"></i>
+                    <strong>Booking slot:</strong> <span id="bookingChipText"></span>
+                </div>
+
+                <?php if ($isAdmin): ?>
+                <div class="form-group" style="margin-bottom:16px;">
+                    <label>Requester</label>
+                    <select name="hdnUser">
+                        <?php if ($users) { $users->data_seek(0); while($u=$users->fetch_assoc()): ?>
+                        <option value="<?php echo $u['UserID']; ?>"><?php echo htmlspecialchars($u['Name']); ?></option>
+                        <?php endwhile; } ?>
+                    </select>
+                </div>
+                <div class="form-group" style="margin-bottom:16px;">
+                    <label>Status</label>
+                    <select name="txtstatus">
+                        <?php foreach(['Pending','Approved','Rejected','Cancelled','Completed'] as $st): ?>
+                        <option value="<?php echo $st; ?>"><?php echo $st; ?></option>
+                        <?php endforeach; ?>
+                    </select>
+                </div>
+                <?php endif; ?>
+
+                <input type="hidden" name="txtstart" id="txtstart">
+                <input type="hidden" name="txtend" id="txtend">
+
+                <?php else: ?>
                 <div class="form-grid">
-                    <?php if ($isAdmin): ?>
-                    <div class="form-group">
-                        <label>Requester</label>
-                        <select name="hdnUser">
-                            <?php while($u=$users->fetch_assoc()): ?>
-                            <option value="<?php echo $u['UserID']; ?>" <?php if(($editRow['UserID']??'_')==$u['UserID']) echo 'selected'; ?>><?php echo htmlspecialchars($u['Name']); ?></option>
-                            <?php endwhile; ?>
-                        </select>
-                    </div>
-                    <div class="form-group">
-                        <label>Linked Booking ID</label>
-                        <select name="hdnBooking">
-                            <?php while($b=$bookings->fetch_assoc()): ?>
-                            <option value="<?php echo $b['BookingID']; ?>" <?php if(($editRow['BookingID']??'_')==$b['BookingID']) echo 'selected'; ?>>#<?php echo $b['BookingID']; ?></option>
-                            <?php endwhile; ?>
-                        </select>
-                    </div>
-                    <?php endif; ?>
                     <div class="form-group">
                         <label>Requested Start <span class="required">*</span></label>
                         <input type="datetime-local" name="txtstart" value="<?php echo str_replace(' ','T',$editRow['Requested_Start']??''); ?>" min="<?php echo date('Y-m-d\TH:i'); ?>" required>
@@ -173,6 +230,8 @@ require_once 'includes/header.php';
                     </div>
                     <?php endif; ?>
                 </div>
+                <?php endif; ?>
+
                 <div style="margin-top:20px;display:flex;gap:10px;">
                     <button type="button" onclick="validateRequestAndShowModal()" class="btn btn-primary"><i class="fas fa-save"></i> Save</button>
                     <button type="button" onclick="showConfirmModal('borrow_requests.php', 'Discard Changes', 'Are you sure you want to leave? Any unsaved changes will be lost.')" class="btn btn-outline">Cancel</button>
@@ -271,20 +330,133 @@ require_once 'includes/header.php';
 </div>
 
 <script>
+// ---- Toast notification (replaces browser alert/confirm) ----
+function showToast(message, type = 'danger') {
+    let toast = document.getElementById('toastNotif');
+    if (!toast) {
+        toast = document.createElement('div');
+        toast.id = 'toastNotif';
+        toast.style.cssText = 'position:fixed;bottom:28px;right:28px;z-index:9999;min-width:280px;max-width:380px;padding:14px 18px;border-radius:10px;font-size:14px;font-weight:500;box-shadow:0 4px 20px rgba(0,0,0,0.15);display:flex;align-items:center;gap:10px;transition:opacity 0.3s;';
+        document.body.appendChild(toast);
+    }
+    const colors = {
+        danger:  { bg: '#fef2f2', border: '#fecaca', text: '#991b1b', icon: 'fa-circle-xmark' },
+        warning: { bg: '#fffbeb', border: '#fde68a', text: '#92400e', icon: 'fa-triangle-exclamation' },
+        success: { bg: '#f0fdf4', border: '#bbf7d0', text: '#166534', icon: 'fa-circle-check' },
+        info:    { bg: '#eff6ff', border: '#bfdbfe', text: '#1e40af', icon: 'fa-circle-info' },
+    };
+    const c = colors[type] || colors.info;
+    toast.style.background = c.bg;
+    toast.style.border = '1.5px solid ' + c.border;
+    toast.style.color = c.text;
+    toast.style.opacity = '1';
+    toast.innerHTML = `<i class="fas ${c.icon}" style="font-size:16px;flex-shrink:0;"></i><span>${message}</span>`;
+    clearTimeout(toast._timer);
+    toast._timer = setTimeout(() => { toast.style.opacity = '0'; }, 3500);
+}
+
+// ---- Item → Slot → Booking chain (Add form only) ----
+const itemSelect    = document.getElementById('itemSelect');
+const slotSelect    = document.getElementById('slotSelect');
+const slotGroup     = document.getElementById('slotGroup');
+const bookingChip   = document.getElementById('bookingChip');
+const bookingChipText = document.getElementById('bookingChipText');
+const hdnBooking    = document.getElementById('hdnBooking');
+const txtstart      = document.getElementById('txtstart');
+const txtend        = document.getElementById('txtend');
+
+if (itemSelect) {
+    itemSelect.addEventListener('change', function() {
+        const itemID = this.value;
+        slotGroup.style.display = 'none';
+        bookingChip.style.display = 'none';
+        if (hdnBooking) hdnBooking.value = '';
+        if (txtstart) txtstart.value = '';
+        if (txtend)   txtend.value = '';
+        slotSelect.innerHTML = '<option value="">— Loading slots… —</option>';
+        if (!itemID) return;
+
+        fetch('get_slots.php?item_id=' + itemID)
+            .then(r => r.json())
+            .then(slots => {
+                slotSelect.innerHTML = '<option value="">— Choose a time slot —</option>';
+                if (slots.length === 0) {
+                    slotSelect.innerHTML += '<option value="" disabled>No open slots for this item yet</option>';
+                    slotGroup.style.display = 'block';
+                    showToast('This item has no available time slots yet. Contact the admin to add slots.', 'warning');
+                } else {
+                    slots.forEach(s => {
+                        const opt = document.createElement('option');
+                        opt.value = s.SlotID;
+                        opt.textContent = s.label;
+                        opt.dataset.start = s.Start_DateTime;
+                        opt.dataset.end   = s.End_DateTime;
+                        slotSelect.appendChild(opt);
+                    });
+                    slotGroup.style.display = 'block';
+                }
+            })
+            .catch(() => {
+                slotSelect.innerHTML = '<option disabled>Error loading slots</option>';
+                slotGroup.style.display = 'block';
+                showToast('Could not load slots. Please refresh the page.', 'danger');
+            });
+    });
+
+    slotSelect.addEventListener('change', function() {
+        const slotID = this.value;
+        bookingChip.style.display = 'none';
+        if (hdnBooking) hdnBooking.value = '';
+        if (txtstart) txtstart.value = '';
+        if (txtend)   txtend.value = '';
+        if (!slotID) return;
+
+        const opt = this.options[this.selectedIndex];
+        if (txtstart) txtstart.value = opt.dataset.start;
+        if (txtend)   txtend.value   = opt.dataset.end;
+
+        fetch('get_booking.php?slot_id=' + slotID)
+            .then(r => r.json())
+            .then(data => {
+                if (data.error) { showToast('Booking error: ' + data.error, 'danger'); return; }
+                if (hdnBooking) hdnBooking.value = data.booking_id;
+                bookingChipText.textContent = opt.textContent + ' (Booking #' + data.booking_id + ')';
+                bookingChip.style.display = 'block';
+            })
+            .catch(() => showToast('Could not create booking. Please try again.', 'danger'));
+    });
+
+    // Auto-trigger if item was pre-selected (from "Request to Borrow" button)
+    if (itemSelect.value) {
+        itemSelect.dispatchEvent(new Event('change'));
+    }
+}
+
+// ---- Validation & Modal ----
 function validateRequestAndShowModal() {
     const form = document.getElementById('requestForm');
-    if (!form.checkValidity()) {
-        form.reportValidity();
-        return;
+    const isAddForm = !!document.getElementById('itemSelect');
+
+    if (isAddForm) {
+        if (!itemSelect || !itemSelect.value) {
+            showToast('Please select an item.', 'warning'); return;
+        }
+        if (!slotSelect || !slotSelect.value) {
+            showToast('Please select a time slot.', 'warning'); return;
+        }
+        if (!hdnBooking || !hdnBooking.value) {
+            showToast('Booking is still being set up. Please wait a moment and try again.', 'warning'); return;
+        }
     }
-    showConfirmModal('SUBMIT_FORM', 'Save Request', 'Are you sure you want to save this borrow request?', 'btn-primary');
+
+    if (!form.checkValidity()) { form.reportValidity(); return; }
+    showConfirmModal('SUBMIT_FORM', 'Submit Request', 'Are you sure you want to submit this borrow request?', 'btn-primary');
 }
 
 function showConfirmModal(url, title, message, btnClass = 'btn-danger') {
     document.getElementById('modalTitle').innerText = title;
     document.getElementById('modalMessage').innerText = message;
     const confirmBtn = document.getElementById('modalConfirmBtn');
-
     if (url === 'SUBMIT_FORM') {
         confirmBtn.href = "javascript:void(0)";
         confirmBtn.onclick = () => document.getElementById('requestForm').submit();
@@ -292,7 +464,6 @@ function showConfirmModal(url, title, message, btnClass = 'btn-danger') {
         confirmBtn.href = url;
         confirmBtn.onclick = null;
     }
-
     confirmBtn.className = 'btn ' + btnClass;
     document.getElementById('confirmModalOverlay').classList.add('open');
 }

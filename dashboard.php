@@ -2,6 +2,9 @@
 require_once 'connect.php';
 requireLogin();
 
+// --- AUTO OVERDUE DETECTION ---
+$connection->query("UPDATE tblborrowtransaction SET Status = 'Overdue' WHERE Status = 'Active' AND ExpectedReturn_DateTime < NOW()");
+
 $stats = [];
 $isAdmin = ($_SESSION['role'] === 'admin');
 $uid = $_SESSION['user_id'];

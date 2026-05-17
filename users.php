@@ -109,7 +109,7 @@ require_once 'includes/header.php';
             <a href="users.php" class="btn btn-outline btn-sm"><i class="fas fa-xmark"></i> Cancel</a>
         </div>
         <div class="card-body">
-            <form method="post">
+            <form method="post" id="userForm">
                 <input type="hidden" name="hdnID" value="<?php echo $editRow['UserID'] ?? 0; ?>">
                 <div class="form-grid">
                     <div class="form-group">
@@ -153,8 +153,8 @@ require_once 'includes/header.php';
                     </div>
                 </div>
                 <div style="margin-top:20px;display:flex;gap:10px;">
-                    <button type="submit" class="btn btn-primary"><i class="fas fa-save"></i> <?php echo $action==='edit'?'Update User':'Add User'; ?></button>
-                    <a href="users.php" class="btn btn-outline">Cancel</a>
+                    <button type="button" onclick="validateAndShowModal()" class="btn btn-primary"><i class="fas fa-save"></i> <?php echo $action==='edit'?'Update User':'Add User'; ?></button>
+                    <button type="button" onclick="showConfirmModal('users.php', 'Discard Changes', 'Are you sure you want to leave? Any unsaved changes will be lost.')" class="btn btn-outline">Cancel</button>
                 </div>
             </form>
         </div>
@@ -216,7 +216,7 @@ require_once 'includes/header.php';
                         <td style="font-size:12px;color:var(--gray-500);"><?php echo date('M j, Y', strtotime($row['CreatedAt'])); ?></td>
                         <td>
                             <a href="?action=edit&id=<?php echo $row['UserID']; ?>" class="btn btn-outline btn-sm"><i class="fas fa-pen"></i></a>
-                            <a href="?action=delete&id=<?php echo $row['UserID']; ?>" class="btn btn-danger btn-sm confirm-delete" style="margin-left:4px;"><i class="fas fa-trash"></i></a>
+                            <button type="button" onclick="showConfirmModal('?action=delete&id=<?php echo $row['UserID']; ?>', 'Delete User', 'Are you sure you want to delete <strong><?php echo htmlspecialchars(addslashes($row['FirstName'].' '.$row['LastName'])); ?></strong>? This action cannot be undone.')" class="btn btn-danger btn-sm" style="margin-left:4px;"><i class="fas fa-trash"></i></button>
                         </td>
                     </tr>
                     <?php endwhile; else: ?>
@@ -234,5 +234,49 @@ require_once 'includes/header.php';
     </div>
 </div>
 </div>
+
+<div class="modal-overlay" id="confirmModalOverlay">
+    <div class="modal">
+        <div class="modal-header">
+            <h3 id="modalTitle">Confirm Action</h3>
+            <button type="button" class="btn-ghost" onclick="closeConfirmModal()"><i class="fas fa-xmark"></i></button>
+        </div>
+        <div class="modal-body">
+            <p id="modalMessage">Are you sure you want to proceed?</p>
+        </div>
+        <div class="modal-footer">
+            <button type="button" class="btn btn-outline" onclick="closeConfirmModal()">Cancel</button>
+            <a href="#" id="modalConfirmBtn" class="btn btn-danger">Confirm</a>
+        </div>
+    </div>
+</div>
+
+<script>
+function validateAndShowModal() {
+    const form = document.getElementById('userForm');
+    if (!form.checkValidity()) { form.reportValidity(); return; }
+    const isEdit = (document.querySelector('input[name="hdnID"]').value !== '0');
+    showConfirmModal('SUBMIT_FORM', isEdit ? 'Update User' : 'Add User',
+        isEdit ? 'Are you sure you want to update this user?' : 'Are you sure you want to add this new user?',
+        'btn-primary');
+}
+function showConfirmModal(url, title, message, btnClass = 'btn-danger') {
+    document.getElementById('modalTitle').innerText = title;
+    document.getElementById('modalMessage').innerHTML = message;
+    const confirmBtn = document.getElementById('modalConfirmBtn');
+    if (url === 'SUBMIT_FORM') {
+        confirmBtn.href = "javascript:void(0)";
+        confirmBtn.onclick = () => document.getElementById('userForm').submit();
+    } else {
+        confirmBtn.href = url;
+        confirmBtn.onclick = null;
+    }
+    confirmBtn.className = 'btn ' + btnClass;
+    document.getElementById('confirmModalOverlay').classList.add('open');
+}
+function closeConfirmModal() {
+    document.getElementById('confirmModalOverlay').classList.remove('open');
+}
+</script>
 
 <?php require_once 'includes/footer.php'; ?>

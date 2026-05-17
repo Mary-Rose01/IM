@@ -7,6 +7,10 @@ $msg = ''; $msgType = 'success';
 $isAdmin = ($_SESSION['role'] === 'admin');
 $uid = $_SESSION['user_id'];
 
+// --- AUTO OVERDUE DETECTION ---
+// Flip any Active transactions whose expected return date has passed to Overdue.
+$connection->query("UPDATE tblborrowtransaction SET Status = 'Overdue' WHERE Status = 'Active' AND ExpectedReturn_DateTime < NOW()");
+
 // --- DELETE ---
 if ($action === 'delete' && isset($_GET['id'])) {
     $id = intval($_GET['id']);
