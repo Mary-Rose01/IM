@@ -10,33 +10,55 @@ $isAdmin = ($_SESSION['role'] === 'admin');
 // --- DELETE ---
 if ($action === 'delete' && isset($_GET['id'])) {
     $id = intval($_GET['id']);
-    // Check permission: Admin or Requester
-    $check = $connection->query("SELECT UserID FROM tblborrowrequest WHERE RequestID = $id")->fetch_assoc();
+    $check = $connection->query(
+        "SELECT r.UserID, r.Status, b.BookingID, avs.SlotID, avs.ItemID
+         FROM tblborrowrequest r
+         LEFT JOIN tblbooking b ON r.BookingID = b.BookingID
+         LEFT JOIN tblavailabilityslot avs ON b.SlotID = avs.SlotID
+         WHERE r.RequestID = $id"
+    )->fetch_assoc();
     if ($isAdmin || ($check && $check['UserID'] == $_SESSION['user_id'])) {
+        if ($check && $check['Status'] === 'Approved') {
+            $slotID = intval($check['SlotID']);
+            $itemID = intval($check['ItemID']);
+            $bookID = intval($check['BookingID']);
+            $connection->query("UPDATE tblavailabilityslot SET isReserved=0 WHERE SlotID=$slotID");
+            $connection->query("UPDATE tblitem SET Availability_Status='Available' WHERE ItemID=$itemID");
+            $connection->query("UPDATE tblbooking SET Status='Cancelled' WHERE BookingID=$bookID");
+        }
         $connection->query("DELETE FROM tblborrowrequest WHERE RequestID = $id");
         $msg = 'Request deleted.';
     } else {
-        $msg = 'Permission denied.'; 
+        $msg = 'Permission denied.';
         $msgType = 'danger';
     }
     $action = 'list';
 }
 
-// --- UPDATE STATUS (admin) ---
+// --- UPDATE STATUS (admin or item owner) ---
 if ($action === 'status' && isset($_GET['id']) && isset($_GET['s'])) {
     $id = intval($_GET['id']);
-    $s  = $connection->real_escape_string($_GET['s']);
+    $s  = $_GET['s'];
+    // Whitelist to prevent arbitrary status injection
+    if (!in_array($s, ['Approved', 'Rejected', 'Cancelled'])) {
+        $msg = 'Invalid status.'; $msgType = 'danger'; $action = 'list';
+    } else {
     $now = date('Y-m-d H:i:s');
 
-    // Load the request's booking → slot → item chain
+    // Load the request's booking → slot → item chain (including owner for permission check)
     $chain = $connection->query(
-        "SELECT r.UserID, b.SlotID, s.ItemID
+        "SELECT r.UserID, b.SlotID, avs.ItemID, i.OwnerUserID
          FROM tblborrowrequest r
          JOIN tblbooking b ON r.BookingID = b.BookingID
-         JOIN tblavailabilityslot s ON b.SlotID = s.SlotID
+         JOIN tblavailabilityslot avs ON b.SlotID = avs.SlotID
+         JOIN tblitem i ON avs.ItemID = i.ItemID
          WHERE r.RequestID = $id"
     )->fetch_assoc();
 
+    // Only admin or the item owner may approve/reject/cancel
+    if (!$isAdmin && (!$chain || $chain['OwnerUserID'] != $_SESSION['user_id'])) {
+        $msg = 'Permission denied.'; $msgType = 'danger'; $action = 'list';
+    } else {
     $connection->query("UPDATE tblborrowrequest SET Status='$s', ReviewedAt='$now' WHERE RequestID=$id");
 
     if ($chain) {
@@ -63,6 +85,8 @@ if ($action === 'status' && isset($_GET['id']) && isset($_GET['s'])) {
 
     $msg = "Request marked as $s.";
     $action = 'list';
+    } // end else (permission check)
+    } // end else (whitelist check)
 }
 
 // --- SAVE ---
@@ -142,8 +166,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $stmt->close();
             $action = 'list';
         } else {
-            $check = $connection->query("SELECT UserID FROM tblborrowrequest WHERE RequestID = $id")->fetch_assoc();
+            $check = $connection->query("SELECT UserID, Status FROM tblborrowrequest WHERE RequestID = $id")->fetch_assoc();
             if ($isAdmin || ($check && $check['UserID'] == $_SESSION['user_id'])) {
+                // Non-admin has no txtstatus field — preserve the existing status
+                if (!$isAdmin) { $status = $check['Status'] ?? 'Pending'; }
                 $stmt = $connection->prepare("UPDATE tblborrowrequest SET Requested_Start=?,Requested_End=?,Status=? WHERE RequestID=?");
                 $stmt->bind_param('sssi', $start,$end,$status,$id);
                 if ($stmt->execute()) $msg = 'Request updated.';
@@ -378,7 +404,7 @@ require_once 'includes/header.php';
                             <button type="button" onclick="showConfirmModal('?action=status&id=<?php echo $row['RequestID']; ?>&s=Approved', 'Approve Request', 'Do you want to approve this borrow request?', 'btn-primary')" class="btn btn-success btn-sm"><i class="fas fa-check"></i> Approve</button>
                             <button type="button" onclick="showConfirmModal('?action=status&id=<?php echo $row['RequestID']; ?>&s=Rejected', 'Decline Request', 'Are you sure you want to decline this request?', 'btn-outline')" class="btn btn-danger btn-sm"><i class="fas fa-xmark"></i> Reject</button>
                             <?php endif; ?>
-                            <?php if ($row['UserID'] == $_SESSION['user_id']): ?>
+                            <?php if ($row['UserID'] == $_SESSION['user_id'] && ($isAdmin || $row['Status'] === 'Pending')): ?>
                             <a href="?action=edit&id=<?php echo $row['RequestID']; ?>" class="btn btn-outline btn-sm"><i class="fas fa-pen"></i></a>
                             <?php endif; ?>
                             <?php if ($isAdmin): ?>

@@ -147,9 +147,9 @@ require_once 'includes/header.php';
                             <?php
                             $depts = [
                                 'College of Computer Studies',
-                                'College of Architecture and Engineering',
-                                'College of Nursing and Allied Health Sciences',
+                                'College of Engineering and Architecture',
                                 'College of Arts, Sciences and Education',
+                                'College of Nursing and Allied Health Sciences',
                                 'College of Management, Business and Accountancy',
                                 'College of Criminal Justice',
                             ];

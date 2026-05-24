@@ -23,23 +23,13 @@ $stats['pending']   = $connection->query("SELECT COUNT(*) c FROM tblborrowreques
 $stats['borrowed']  = $connection->query("SELECT COUNT(*) c FROM tblitem WHERE Availability_Status = 'Borrowed' AND $whereItems")->fetch_assoc()['c'];
 $stats['completed'] = $connection->query("SELECT COUNT(*) c FROM tblborrowtransaction t JOIN tblborrowrequest r ON t.RequestID = r.RequestID WHERE t.Status = 'Returned' AND $whereTx")->fetch_assoc()['c'];
 
-// Pagination Logic
+// Pagination Logic (items only; requests and transactions show fixed 5 on dashboard)
 $limit = 10;
 $p_items = max(1, intval($_GET['p_items'] ?? 1));
-$p_reqs  = max(1, intval($_GET['p_reqs'] ?? 1));
-$p_tx    = max(1, intval($_GET['p_tx'] ?? 1));
-
 $off_items = ($p_items - 1) * $limit;
-$off_reqs  = ($p_reqs - 1) * $limit;
-$off_tx    = ($p_tx - 1) * $limit;
 
 $totalItemsCount = $connection->query("SELECT COUNT(*) c FROM tblitem WHERE $whereItems")->fetch_assoc()['c'];
-$totalReqsCount  = $connection->query("SELECT COUNT(*) c FROM tblborrowrequest r WHERE $whereReqs")->fetch_assoc()['c'];
-$totalTxCount    = $connection->query("SELECT COUNT(*) c FROM tblborrowtransaction t JOIN tblborrowrequest r ON t.RequestID = r.RequestID WHERE $whereTx")->fetch_assoc()['c'];
-
 $pagesItems = max(1, ceil($totalItemsCount / $limit));
-$pagesReqs  = max(1, ceil($totalReqsCount / $limit));
-$pagesTx    = max(1, ceil($totalTxCount / $limit));
 
 $recentItems = $connection->query(
     "SELECT i.ItemID, i.Item_Name, i.Category, i.Availability_Status,
@@ -52,7 +42,7 @@ $recentReqs = $connection->query(
     "SELECT r.RequestID, r.Status, r.CreatedAt, r.Requested_Start, r.Requested_End,
             CONCAT(u.FirstName,' ',u.LastName) as RequesterName
      FROM tblborrowrequest r JOIN tbluser u ON r.UserID = u.UserID
-     WHERE $whereReqs ORDER BY r.CreatedAt DESC LIMIT $limit OFFSET $off_reqs"
+     WHERE $whereReqs ORDER BY r.CreatedAt DESC LIMIT 5"
 );
 
 $recentTx = $connection->query(
@@ -62,7 +52,7 @@ $recentTx = $connection->query(
      FROM tblborrowtransaction t
      JOIN tblborrowrequest r ON t.RequestID = r.RequestID
      JOIN tbluser u ON r.UserID = u.UserID
-     WHERE $whereTx ORDER BY t.CreatedAt DESC LIMIT $limit OFFSET $off_tx"
+     WHERE $whereTx ORDER BY t.CreatedAt DESC LIMIT 5"
 );
 
 $pageTitle = 'Dashboard';
@@ -103,8 +93,8 @@ require_once 'includes/header.php';
 
     <?php 
     // Helper to generate pagination URLs preserving other section pages
-    function pagelink($pi, $pr, $pt, $tr) {
-        return "?p_items=$pi&p_reqs=$pr&p_tx=$pt&tab_reqs=$tr";
+    function pagelink($pi, $tr) {
+        return "?p_items=$pi&tab_reqs=$tr";
     } ?>
 
     <!-- My Listed Items -->
@@ -134,13 +124,13 @@ require_once 'includes/header.php';
         <?php if ($pagesItems >= 1): ?>
         <div class="pagination" style="margin-top:24px;">
             <?php if ($p_items > 1): ?>
-                <a href="<?php echo pagelink($p_items-1, $p_reqs, $p_tx, $tab_reqs); ?>" class="page-link" style="width:auto; padding:0 15px; margin-right:5px;"><i class="fas fa-chevron-left"></i> Back</a>
+                <a href="<?php echo pagelink($p_items-1, $tab_reqs); ?>" class="page-link" style="width:auto; padding:0 15px; margin-right:5px;"><i class="fas fa-chevron-left"></i> Back</a>
             <?php endif; ?>
             <?php for ($i = 1; $i <= $pagesItems; $i++): ?>
-                <a href="<?php echo pagelink($i, $p_reqs, $p_tx, $tab_reqs); ?>" class="page-link <?php echo $i == $p_items ? 'active' : ''; ?>"><?php echo $i; ?></a>
+                <a href="<?php echo pagelink($i, $tab_reqs); ?>" class="page-link <?php echo $i == $p_items ? 'active' : ''; ?>"><?php echo $i; ?></a>
             <?php endfor; ?>
             <?php if ($p_items < $pagesItems): ?>
-                <a href="<?php echo pagelink($p_items+1, $p_reqs, $p_tx, $tab_reqs); ?>" class="page-link" style="width:auto; padding:0 15px; margin-left:5px;">Next <i class="fas fa-chevron-right"></i></a>
+                <a href="<?php echo pagelink($p_items+1, $tab_reqs); ?>" class="page-link" style="width:auto; padding:0 15px; margin-left:5px;">Next <i class="fas fa-chevron-right"></i></a>
             <?php endif; ?>
             <div class="page-info">Showing page <?php echo $p_items; ?> of <?php echo $pagesItems; ?></div>
         </div>
@@ -154,8 +144,8 @@ require_once 'includes/header.php';
             <a href="borrow_requests.php" class="section-link">View All →</a>
         </div>
         <div class="tablist">
-            <a href="<?php echo pagelink($p_items, 1, $p_tx, 'incoming'); ?>" class="tab-item <?php echo $tab_reqs === 'incoming' ? 'active' : ''; ?>"><i class="fas fa-inbox"></i> Incoming (<?php echo $stats['pending']; ?>)</a>
-            <a href="<?php echo pagelink($p_items, 1, $p_tx, 'my'); ?>" class="tab-item <?php echo $tab_reqs === 'my' ? 'active' : ''; ?>"><i class="fas fa-paper-plane"></i> My Requests</a>
+            <a href="<?php echo pagelink($p_items, 'incoming'); ?>" class="tab-item <?php echo $tab_reqs === 'incoming' ? 'active' : ''; ?>"><i class="fas fa-inbox"></i> Incoming (<?php echo $stats['pending']; ?>)</a>
+            <a href="<?php echo pagelink($p_items, 'my'); ?>" class="tab-item <?php echo $tab_reqs === 'my' ? 'active' : ''; ?>"><i class="fas fa-paper-plane"></i> My Requests</a>
         </div>
 
         <?php if ($recentReqs && $recentReqs->num_rows > 0): while ($row = $recentReqs->fetch_assoc()):
@@ -184,21 +174,6 @@ require_once 'includes/header.php';
         <div class="empty-state" style="padding:40px 20px;"><i class="fas fa-inbox"></i><h3>No borrow requests yet</h3></div>
         <?php endif; ?>
 
-        <!-- Requests Pagination -->
-        <?php if ($pagesReqs >= 1): ?>
-        <div class="pagination" style="margin-top:24px;">
-            <?php if ($p_reqs > 1): ?>
-                <a href="<?php echo pagelink($p_items, $p_reqs-1, $p_tx, $tab_reqs); ?>" class="page-link" style="width:auto; padding:0 15px; margin-right:5px;"><i class="fas fa-chevron-left"></i> Back</a>
-            <?php endif; ?>
-            <?php for ($i = 1; $i <= $pagesReqs; $i++): ?>
-                <a href="<?php echo pagelink($p_items, $i, $p_tx, $tab_reqs); ?>" class="page-link <?php echo $i == $p_reqs ? 'active' : ''; ?>"><?php echo $i; ?></a>
-            <?php endfor; ?>
-            <?php if ($p_reqs < $pagesReqs): ?>
-                <a href="<?php echo pagelink($p_items, $p_reqs+1, $p_tx, $tab_reqs); ?>" class="page-link" style="width:auto; padding:0 15px; margin-left:5px;">Next <i class="fas fa-chevron-right"></i></a>
-            <?php endif; ?>
-            <div class="page-info">Showing page <?php echo $p_reqs; ?> of <?php echo $pagesReqs; ?></div>
-        </div>
-        <?php endif; ?>
     </div>
 
     <!-- Transactions -->
@@ -236,21 +211,6 @@ require_once 'includes/header.php';
         <div class="empty-state" style="padding:40px 20px;"><i class="fas fa-arrow-right-arrow-left"></i><h3>No transactions yet</h3></div>
         <?php endif; ?>
 
-        <!-- Transactions Pagination -->
-        <?php if ($pagesTx >= 1): ?>
-        <div class="pagination" style="margin-top:24px;">
-            <?php if ($p_tx > 1): ?>
-                <a href="<?php echo pagelink($p_items, $p_reqs, $p_tx-1, $tab_reqs); ?>" class="page-link" style="width:auto; padding:0 15px; margin-right:5px;"><i class="fas fa-chevron-left"></i> Back</a>
-            <?php endif; ?>
-            <?php for ($i = 1; $i <= $pagesTx; $i++): ?>
-                <a href="<?php echo pagelink($p_items, $p_reqs, $i, $tab_reqs); ?>" class="page-link <?php echo $i == $p_tx ? 'active' : ''; ?>"><?php echo $i; ?></a>
-            <?php endfor; ?>
-            <?php if ($p_tx < $pagesTx): ?>
-                <a href="<?php echo pagelink($p_items, $p_reqs, $p_tx+1, $tab_reqs); ?>" class="page-link" style="width:auto; padding:0 15px; margin-left:5px;">Next <i class="fas fa-chevron-right"></i></a>
-            <?php endif; ?>
-            <div class="page-info">Showing page <?php echo $p_tx; ?> of <?php echo $pagesTx; ?></div>
-        </div>
-        <?php endif; ?>
     </div>
 
     <!-- Admin Quick Actions -->

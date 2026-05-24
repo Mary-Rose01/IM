@@ -176,11 +176,12 @@ require_once 'includes/header.php';
                                 <i class="fas fa-university input-icon"></i>
                                 <select name="txtdepartment" style="padding-left:40px;">
                                     <option value="">-- Select Department --</option>
-                                    <option value="CCS" <?php echo ($department == 'CCS') ? 'selected' : ''; ?>>College of Computer Studies</option>
-                                    <option value="CEA" <?php echo ($department == 'CEA') ? 'selected' : ''; ?>>College of Engineering and Architecture</option>
-                                    <option value="CASE" <?php echo ($department == 'CASE') ? 'selected' : ''; ?>>College of Arts, Sciences and Education</option>
-                                    <option value="CNAHS" <?php echo ($department == 'CNAHS') ? 'selected' : ''; ?>>College of Nursing and Allied Health Sciences</option>
-                                    <option value="CMBA" <?php echo ($department == 'CMBA') ? 'selected' : ''; ?>>College of Management, Business and Accountancy</option>
+                                    <option value="College of Computer Studies" <?php echo ($department == 'College of Computer Studies') ? 'selected' : ''; ?>>College of Computer Studies</option>
+                                    <option value="College of Engineering and Architecture" <?php echo ($department == 'College of Engineering and Architecture') ? 'selected' : ''; ?>>College of Engineering and Architecture</option>
+                                    <option value="College of Arts, Sciences and Education" <?php echo ($department == 'College of Arts, Sciences and Education') ? 'selected' : ''; ?>>College of Arts, Sciences and Education</option>
+                                    <option value="College of Nursing and Allied Health Sciences" <?php echo ($department == 'College of Nursing and Allied Health Sciences') ? 'selected' : ''; ?>>College of Nursing and Allied Health Sciences</option>
+                                    <option value="College of Management, Business and Accountancy" <?php echo ($department == 'College of Management, Business and Accountancy') ? 'selected' : ''; ?>>College of Management, Business and Accountancy</option>
+                                    <option value="College of Criminal Justice" <?php echo ($department == 'College of Criminal Justice') ? 'selected' : ''; ?>>College of Criminal Justice</option>
                                 </select>
                             </div>
                         </div>

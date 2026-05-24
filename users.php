@@ -39,7 +39,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             "INSERT INTO tbluser (Institutional_Email,FirstName,MiddleName,LastName,isActive,isOrganization,isStudent,Username,Password,Role)
              VALUES (?,?,?,?,?,?,?,?,?,?)"
         );
-        $stmt->bind_param('ssssiiiiss', $email,$fname,$mname,$lname,$isActive,$isO,$isS,$uname,$hashed,$role);
+        $stmt->bind_param('ssssiiisss', $email,$fname,$mname,$lname,$isActive,$isO,$isS,$uname,$hashed,$role);
         if ($stmt->execute()) $msg = 'User added successfully.';
         else { $msg = 'Error: ' . $stmt->error; $msgType = 'danger'; }
         $stmt->close();

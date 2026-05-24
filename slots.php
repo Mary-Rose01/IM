@@ -18,8 +18,11 @@ if ($action === 'delete' && isset($_GET['id'])) {
          WHERE s.SlotID = $id"
     )->fetch_assoc();
     if ($isAdmin || ($check && $check['OwnerUserID'] == $uid)) {
-        $connection->query("DELETE FROM tblavailabilityslot WHERE SlotID = $id");
-        $msg = 'Slot deleted.';
+        if ($connection->query("DELETE FROM tblavailabilityslot WHERE SlotID = $id")) {
+            $msg = 'Slot deleted.';
+        } else {
+            $msg = 'Cannot delete: this slot has active bookings.'; $msgType = 'danger';
+        }
     } else {
         $msg = 'Permission denied.'; $msgType = 'danger';
     }
@@ -146,7 +149,7 @@ $slots = $connection->query(
      JOIN tblitem i ON s.ItemID = i.ItemID
      JOIN tbluser u ON i.OwnerUserID = u.UserID
      WHERE $where
-     ORDER BY s.Start_DateTime ASC
+     ORDER BY CASE WHEN s.End_DateTime < NOW() THEN 2 WHEN s.isReserved = 1 THEN 1 ELSE 0 END ASC, s.Start_DateTime ASC
      LIMIT $limit OFFSET $off"
 );
 
@@ -263,7 +266,7 @@ require_once 'includes/header.php';
             <h3>All Slots</h3>
             <p><?php echo $totalCount; ?> slot(s)</p>
         </div>
-        <form method="get" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+        <form method="get" style="display:flex;gap:8px;align-items:center;">
             <div class="search-bar">
                 <i class="fas fa-search"></i>
                 <input type="text" name="q" placeholder="Search item name…" value="<?php echo htmlspecialchars($search); ?>">

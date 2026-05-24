@@ -13,8 +13,11 @@ if ($action === 'delete' && isset($_GET['id'])) {
     // Only admin or owner can delete
     $check = $connection->query("SELECT OwnerUserID FROM tblitem WHERE ItemID = $id")->fetch_assoc();
     if ($isAdmin || ($check && $check['OwnerUserID'] == $_SESSION['user_id'])) {
-        $connection->query("DELETE FROM tblitem WHERE ItemID = $id");
-        $msg = 'Item deleted.';
+        if ($connection->query("DELETE FROM tblitem WHERE ItemID = $id")) {
+            $msg = 'Item deleted.';
+        } else {
+            $msg = 'Cannot delete: this item has active slots or bookings.'; $msgType = 'danger';
+        }
     } else {
         $msg = 'Permission denied.'; $msgType = 'danger';
     }
@@ -59,8 +62,29 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 "INSERT INTO tblitem (Item_Name,Description,Category,Image,Status,Availability_Status,OwnerUserID) VALUES (?,?,?,?,?,?,?)"
             );
             $stmt->bind_param('ssssssi', $name,$desc,$cat,$imageName,$status,$avail,$owner);
-            if ($stmt->execute()) $msg = 'Item added successfully.';
-            else { $msg = 'Error: '.$stmt->error; $msgType = 'danger'; }
+            if ($stmt->execute()) {
+                $newItemID  = $connection->insert_id;
+                $stmt->close();
+                $slotStarts = $_POST['slot_start'] ?? [];
+                $slotEnds   = $_POST['slot_end']   ?? [];
+                $slotCount  = 0;
+                foreach ($slotStarts as $i => $slotStart) {
+                    $slotStart = trim($slotStart);
+                    $slotEnd   = trim($slotEnds[$i] ?? '');
+                    if ($slotStart && $slotEnd && strtotime($slotEnd) > strtotime($slotStart)) {
+                        $ss = $connection->prepare("INSERT INTO tblavailabilityslot (ItemID, Start_DateTime, End_DateTime, isReserved) VALUES (?, ?, ?, 0)");
+                        $ss->bind_param('iss', $newItemID, $slotStart, $slotEnd);
+                        $ss->execute();
+                        $ss->close();
+                        $slotCount++;
+                    }
+                }
+                $redirectMsg = $slotCount > 0 ? "Item and $slotCount slot(s) added successfully." : 'Item added successfully.';
+                header("Location: items.php?msg=" . urlencode($redirectMsg));
+                exit;
+            } else {
+                $msg = 'Error: '.$stmt->error; $msgType = 'danger';
+            }
             $stmt->close();
         } else {
             // Security Check: Only Admin or Owner can Update
@@ -237,17 +261,35 @@ require_once 'includes/header.php';
                         <input type="file" name="itemImage" accept="image/jpeg,image/png,image/webp,image/gif" style="padding:6px;">
                     </div>
                 </div>
+                <?php if ($action === 'add'): ?>
+                <div style="margin-top:24px;border-top:1px solid var(--cream-border);padding-top:20px;">
+                    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;">
+                        <h4 style="font-size:14px;font-weight:700;color:var(--text-dark);margin:0;"><i class="fas fa-calendar-plus" style="color:var(--maroon);margin-right:6px;"></i>Availability Slots</h4>
+                        <button type="button" onclick="addSlotRow()" class="btn btn-outline btn-sm"><i class="fas fa-plus"></i> Add Slot</button>
+                    </div>
+                    <div id="slotRows">
+                        <div class="slot-row" style="display:grid;grid-template-columns:1fr 1fr 32px;gap:10px;align-items:end;margin-bottom:10px;">
+                            <div class="form-group" style="margin:0;">
+                                <label style="font-size:12px;">Available From</label>
+                                <input type="datetime-local" name="slot_start[]" min="<?php echo date('Y-m-d\TH:i'); ?>">
+                            </div>
+                            <div class="form-group" style="margin:0;">
+                                <label style="font-size:12px;">Available Until</label>
+                                <input type="datetime-local" name="slot_end[]" min="<?php echo date('Y-m-d\TH:i'); ?>">
+                            </div>
+                            <div></div>
+                        </div>
+                    </div>
+                </div>
+                <?php endif; ?>
                 <div style="margin-top:20px;display:flex;gap:10px;flex-wrap:wrap;">
                     <button type="button" onclick="validateAndShowModal()" class="btn btn-primary"><i class="fas fa-save"></i> Save Item</button>
-                    <?php if ($action === 'edit' && isset($editRow['ItemID'])): ?>
-                    <a href="slots.php?action=add&item_id=<?php echo $editRow['ItemID']; ?>" class="btn btn-outline"><i class="fas fa-calendar-plus"></i> Add Slot</a>
-                    <a href="slots.php?item_id_filter=<?php echo $editRow['ItemID']; ?>" class="btn btn-outline"><i class="fas fa-calendar"></i> View Slots</a>
-                    <?php endif; ?>
                     <button type="button" onclick="showConfirmModal('items.php', 'Discard Changes', 'Are you sure you want to leave? Any unsaved changes will be lost.')" class="btn btn-outline">Cancel</button>
                 </div>
             </form>
         </div>
     </div>
+
     <?php endif; ?>
 
     <?php if ($action === 'view' && $viewRow): ?>
@@ -305,7 +347,7 @@ require_once 'includes/header.php';
     <div class="card">
         <div class="card-header">
             <div><h3>Item Catalog</h3><p><?php echo $totalCount; ?> item(s)</p></div>
-            <form method="get" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+            <form method="get" style="display:flex;gap:8px;align-items:center;">
                 <?php if ($viewMine): ?><input type="hidden" name="view" value="mine"><?php endif; ?>
                 <div class="search-bar"><i class="fas fa-search"></i>
                     <input type="text" name="q" placeholder="Search items..." value="<?php echo htmlspecialchars($search); ?>">
@@ -367,7 +409,7 @@ require_once 'includes/header.php';
                             <a href="?action=edit&id=<?php echo $row['ItemID']; ?>" class="btn btn-outline btn-sm"><i class="fas fa-pen"></i></a>
                             <button type="button" onclick="showConfirmModal('?action=delete&id=<?php echo $row['ItemID']; ?>', 'Delete Item', 'Are you sure you want to delete this item? This action cannot be undone.')" class="btn btn-danger btn-sm" style="margin-left:4px;"><i class="fas fa-trash"></i></button>
                             <?php elseif ($row['Availability_Status'] === 'Available'): ?>
-                            <a href="borrow_requests.php?action=add" class="btn btn-success btn-sm"><i class="fas fa-hand-holding"></i> Borrow</a>
+                            <a href="borrow_requests.php?action=add&item_id=<?php echo $row['ItemID']; ?>" class="btn btn-success btn-sm"><i class="fas fa-hand-holding"></i> Borrow</a>
                             <?php endif; ?>
                         </td>
                     </tr>
@@ -442,6 +484,29 @@ function showConfirmModal(url, title, message, btnClass = 'btn-danger') {
 }
 function closeConfirmModal() {
     document.getElementById('confirmModalOverlay').classList.remove('open');
+}
+
+// ---- Multi-slot row management ----
+const minDt = '<?php echo date('Y-m-d\TH:i'); ?>';
+function addSlotRow() {
+    const container = document.getElementById('slotRows');
+    if (!container) return;
+    const row = document.createElement('div');
+    row.className = 'slot-row';
+    row.style.cssText = 'display:grid;grid-template-columns:1fr 1fr 32px;gap:10px;align-items:end;margin-bottom:10px;';
+    row.innerHTML =
+        '<div class="form-group" style="margin:0;">' +
+            '<label style="font-size:12px;">Available From</label>' +
+            '<input type="datetime-local" name="slot_start[]" min="' + minDt + '">' +
+        '</div>' +
+        '<div class="form-group" style="margin:0;">' +
+            '<label style="font-size:12px;">Available Until</label>' +
+            '<input type="datetime-local" name="slot_end[]" min="' + minDt + '">' +
+        '</div>' +
+        '<div style="padding-bottom:1px;">' +
+            '<button type="button" onclick="this.closest(\'.slot-row\').remove()" class="btn btn-danger btn-sm" style="padding:7px 10px;"><i class="fas fa-xmark"></i></button>' +
+        '</div>';
+    container.appendChild(row);
 }
 </script>
 
