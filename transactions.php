@@ -1,14 +1,34 @@
 <?php
 require_once 'connect.php';
-requireAdmin();
+requireLogin();
 
 $action = $_GET['action'] ?? 'list';
 $msg = ''; $msgType = 'success';
+$isAdmin = ($_SESSION['role'] === 'admin');
+$uid = $_SESSION['user_id'];
 
+// --- AUTO OVERDUE DETECTION ---
+// Flip any Active transactions whose expected return date has passed to Overdue.
+$connection->query("UPDATE tblborrowtransaction SET Status = 'Overdue' WHERE Status = 'Active' AND ExpectedReturn_DateTime < NOW()");
+
+// Only admin can add new transactions
+if ($action === 'add' && !$isAdmin) {
+    header('Location: transactions.php');
+    exit;
+}
+
+// --- DELETE ---
 if ($action === 'delete' && isset($_GET['id'])) {
     $id = intval($_GET['id']);
-    $connection->query("DELETE FROM tblborrowtransaction WHERE TransactionID = $id");
-    $msg = 'Transaction deleted.'; $action = 'list';
+    // Only admin can delete transactions
+    if ($isAdmin) {
+        $connection->query("DELETE FROM tblborrowtransaction WHERE TransactionID = $id");
+        $msg = 'Transaction deleted.';
+    } else {
+        $msg = 'Permission denied.';
+        $msgType = 'danger';
+    }
+    $action = 'list';
 }
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
@@ -21,18 +41,134 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $condRet    = trim($_POST['txtcondReturn'] ?? '') ?: null;
     $status     = trim($_POST['txtstatus'] ?? 'Active');
 
-    if ($id === 0) {
+    if ($id === 0 && $reqID <= 0) {
+        $msg = 'Please select a valid approved borrow request.';
+        $msgType = 'danger';
+        $action = 'add';
+    } elseif ($id === 0) {
         $stmt = $connection->prepare("INSERT INTO tblborrowtransaction (RequestID,Release_DateTime,ExpectedReturn_DateTime,ActualReturn_DateTime,Condition_On_Release,Condition_On_Return,Status) VALUES (?,?,?,?,?,?,?)");
         $stmt->bind_param('issssss', $reqID,$release,$expected,$actual,$condR,$condRet,$status);
-        if ($stmt->execute()) $msg = 'Transaction created.';
-        else { $msg = $stmt->error; $msgType='danger'; }
+        if ($stmt->execute()) {
+            $msg = 'Transaction created.';
+            $txID = $connection->insert_id; // Get the newly created TransactionID
+
+            // Retrieve item, borrower, and owner details for notifications
+            $reqData = $connection->query(
+                "SELECT s.ItemID, s.SlotID, r.UserID as BorrowerID, i.Item_Name, i.OwnerUserID, CONCAT(req_u.FirstName,' ',req_u.LastName) as RequesterFullName
+                 FROM tblborrowrequest r
+                 JOIN tblbooking b ON r.BookingID = b.BookingID
+                 JOIN tblavailabilityslot s ON b.SlotID = s.SlotID
+                 JOIN tblitem i ON s.ItemID = i.ItemID
+                 JOIN tbluser req_u ON r.UserID = req_u.UserID
+                 WHERE r.RequestID = $reqID"
+            )->fetch_assoc();
+
+            if ($reqData) {
+                $iid = intval($reqData['ItemID']);
+                $sid = intval($reqData['SlotID']);
+                $borrowerID = intval($reqData['BorrowerID']);
+                $itemName = $connection->real_escape_string($reqData['Item_Name']);
+                $ownerID = intval($reqData['OwnerUserID']);
+
+                // Notify Borrower of official release
+                $notifMsg = $connection->real_escape_string("Item '$itemName' has been officially released to you (Transaction #$txID).");
+                $connection->query("INSERT INTO tblnotification (UserID, Message, Link) VALUES ($borrowerID, '$notifMsg', 'transactions.php')");
+
+                // Sync item availability based on the recorded status
+                if ($status === 'Returned') {
+                    $connection->query("UPDATE tblitem SET Availability_Status='Available' WHERE ItemID=$iid");
+                    if ($sid > 0) {
+                        $connection->query("UPDATE tblavailabilityslot SET isReserved=0 WHERE SlotID=$sid");
+                    }
+                } elseif ($status === 'Lost') {
+                    $connection->query("UPDATE tblitem SET Status='Lost', Availability_Status='Archived' WHERE ItemID=$iid");
+                } else {
+                    $connection->query("UPDATE tblitem SET Availability_Status='Borrowed' WHERE ItemID=$iid");
+                }
+
+                // Confirm the booking now that the item is released
+                $connection->query(
+                    "UPDATE tblbooking SET Status='Confirmed'
+                     WHERE BookingID = (SELECT BookingID FROM tblborrowrequest WHERE RequestID = $reqID)"
+                );
+
+                // Notify the Item Owner if they are not the one recording the transaction
+                if ($ownerID && $ownerID != $uid) {
+                    $ownerNotifMsg = $connection->real_escape_string("Your item '$itemName' has been officially released (Transaction #$txID) to {$reqData['RequesterFullName']}.");
+                    $connection->query("INSERT INTO tblnotification (UserID, Message, Link) VALUES ($ownerID, '$ownerNotifMsg', 'transactions.php')");
+                }
+            }
+        } else {
+            $msg = $stmt->error; $msgType='danger';
+        }
         $stmt->close();
     } else {
-        $stmt = $connection->prepare("UPDATE tblborrowtransaction SET ActualReturn_DateTime=?,Condition_On_Return=?,Status=? WHERE TransactionID=?");
-        $stmt->bind_param('sssi', $actual,$condRet,$status,$id);
-        if ($stmt->execute()) $msg = 'Transaction updated.';
-        else { $msg = $stmt->error; $msgType='danger'; }
-        $stmt->close();
+        // Security Check for updating: Admin or Item Owner
+        $check = $connection->query(
+            "SELECT i.OwnerUserID, i.ItemID, i.Item_Name, avs.SlotID,
+                    r.UserID as BorrowerID, r.RequestID, b.BookingID
+             FROM tblborrowtransaction t
+             LEFT JOIN tblborrowrequest r ON t.RequestID = r.RequestID
+             LEFT JOIN tblbooking b ON r.BookingID = b.BookingID
+             LEFT JOIN tblavailabilityslot avs ON b.SlotID = avs.SlotID
+             LEFT JOIN tblitem i ON avs.ItemID = i.ItemID
+             WHERE t.TransactionID = $id"
+        )->fetch_assoc();
+
+        if ($isAdmin || ($check && $check['OwnerUserID'] == $_SESSION['user_id'])) {
+            $stmt = $connection->prepare("UPDATE tblborrowtransaction SET ActualReturn_DateTime=?,Condition_On_Return=?,Status=? WHERE TransactionID=?");
+            $stmt->bind_param('sssi', $actual,$condRet,$status,$id);
+            if ($stmt->execute()) {
+                $msg = 'Transaction updated.';
+
+                // Notify involved users of the status change
+                $safeItem = $connection->real_escape_string($check['Item_Name'] ?? 'Item');
+                $notifMsg = $connection->real_escape_string("Transaction #$id for '$safeItem' has been marked as $status.");
+                
+                $connection->query("INSERT INTO tblnotification (UserID, Message, Link) VALUES ({$check['BorrowerID']}, '$notifMsg', 'transactions.php')");
+                if ($isAdmin && $check['OwnerUserID'] != $uid) {
+                    $connection->query("INSERT INTO tblnotification (UserID, Message, Link) VALUES ({$check['OwnerUserID']}, '$notifMsg', 'transactions.php')");
+                }
+
+                // Sync Item status based on flags
+                if ($check && $check['ItemID']) {
+                    $iid = intval($check['ItemID']);
+                    $sid = intval($check['SlotID']);
+
+                    if ($status === 'Returned') {
+                        // 1. Flip item back to Available in catalog
+                        $connection->query("UPDATE tblitem SET Availability_Status='Available' WHERE ItemID = $iid");
+                        // 2. Release the availability slot so it can be booked again
+                        if ($sid > 0) {
+                            $connection->query("UPDATE tblavailabilityslot SET isReserved=0 WHERE SlotID = $sid");
+                        }
+                        // 3. Mark the borrow request and booking as Completed
+                        if (!empty($check['RequestID'])) {
+                            $rid = intval($check['RequestID']);
+                            $connection->query("UPDATE tblborrowrequest SET Status='Completed', ReviewedAt=NOW() WHERE RequestID = $rid");
+                        }
+                        if (!empty($check['BookingID'])) {
+                            $bid = intval($check['BookingID']);
+                            $connection->query("UPDATE tblbooking SET Status='Completed' WHERE BookingID = $bid");
+                        }
+                    } elseif ($status === 'Lost') {
+                        // Flag the item itself as Lost and archive it
+                        $connection->query("UPDATE tblitem SET Status='Lost', Availability_Status='Archived' WHERE ItemID = $iid");
+                        // Mark the request as Completed
+                        if (!empty($check['RequestID'])) {
+                            $rid = intval($check['RequestID']);
+                            $connection->query("UPDATE tblborrowrequest SET Status='Completed', ReviewedAt=NOW() WHERE RequestID = $rid");
+                        }
+                    }
+                }
+            } else {
+                $msg = $stmt->error; $msgType='danger';
+            }
+            $stmt->close();
+        } else {
+            $msg = 'Permission denied.';
+            $msgType = 'danger';
+        }
     }
     $action = 'list';
 }
@@ -40,15 +176,36 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 $editRow = null;
 if ($action === 'edit' && isset($_GET['id'])) {
     $id = intval($_GET['id']);
-    $editRow = $connection->query("SELECT * FROM tblborrowtransaction WHERE TransactionID=$id")->fetch_assoc();
+    // Fetch transaction details along with item owner for permission check
+    $r = $connection->query(
+        "SELECT t.*, i.OwnerUserID
+         FROM tblborrowtransaction t
+         LEFT JOIN tblborrowrequest r ON t.RequestID = r.RequestID
+         LEFT JOIN tblbooking b ON r.BookingID = b.BookingID
+         LEFT JOIN tblavailabilityslot avs ON b.SlotID = avs.SlotID
+         LEFT JOIN tblitem i ON avs.ItemID = i.ItemID
+         WHERE t.TransactionID = $id"
+    );
+    $editRow = $r->fetch_assoc();
+
+    // Security Check for editing: Admin or Item Owner
+    if (!$isAdmin && (!$editRow || $editRow['OwnerUserID'] != $_SESSION['user_id'])) {
+        header("Location: transactions.php?msg=Permission+denied&msgType=danger");
+        exit;
+    }
 }
 
+$where = $isAdmin ? '1=1' : "(r.UserID = $uid OR i.OwnerUserID = $uid)"; // Show for borrower or owner
+
 $transactions = $connection->query(
-    "SELECT t.*, CONCAT(u.FirstName,' ',u.LastName) as RequesterName, r.Requested_Start, r.Requested_End
+    "SELECT t.*, CONCAT(u.FirstName,' ',u.LastName) as RequesterName, r.Requested_Start, r.Requested_End, i.OwnerUserID
      FROM tblborrowtransaction t
      JOIN tblborrowrequest r ON t.RequestID = r.RequestID
      JOIN tbluser u ON r.UserID = u.UserID
-     ORDER BY t.CreatedAt DESC"
+     LEFT JOIN tblbooking b ON r.BookingID = b.BookingID
+     LEFT JOIN tblavailabilityslot avs ON b.SlotID = avs.SlotID
+     LEFT JOIN tblitem i ON avs.ItemID = i.ItemID
+     WHERE $where ORDER BY t.CreatedAt DESC"
 );
 
 $approvedReqs = $connection->query(
@@ -61,14 +218,15 @@ $approvedReqs = $connection->query(
 $pageTitle = 'Borrow Transactions';
 require_once 'includes/header.php';
 ?>
-
 <?php require_once "includes/navbar.php"; ?>
 <div class="layout-top">
 <div class="page-wrapper">
 
 <div class="page-header">
-    <div class="page-title"><h1>Borrow Transactions</h1><p>Track item releases and returns</p></div>
+    <div class="page-title"><h1>Borrow Transactions</h1><p><?php echo $isAdmin ? 'Track all item releases and returns' : 'View your item borrowing history'; ?></p></div>
+    <?php if ($isAdmin): // Only admin can record new transactions ?>
     <div style="display:flex;gap:10px;"><a href="?action=add" class="btn btn-primary btn-sm"><i class="fas fa-plus"></i> Record Transaction</a></div>
+    <?php endif; ?>
 </div>
     <?php if ($msg): ?>
     <div class="alert alert-<?php echo $msgType; ?> auto-dismiss"><i class="fas fa-circle-check"></i> <?php echo $msg; ?></div>
@@ -76,20 +234,29 @@ require_once 'includes/header.php';
 
     <?php if ($action === 'add' || $action === 'edit'): ?>
     <div class="card" style="max-width:700px;margin-bottom:24px;">
-        <div class="card-header"><div><h3><?php echo $action==='edit'?'Update Transaction':'New Transaction'; ?></h3></div>
-        <a href="transactions.php" class="btn btn-outline btn-sm"><i class="fas fa-xmark"></i></a></div>
+        <div class="card-header">
+            <div><h3><?php echo $action==='edit'?'Update Transaction':'New Transaction'; ?></h3></div>
+        </div>
         <div class="card-body">
-            <form method="post">
+            <form method="post" id="transactionForm">
                 <input type="hidden" name="hdnID" value="<?php echo $editRow['TransactionID'] ?? 0; ?>">
                 <div class="form-grid cols-3">
                     <?php if ($action === 'add'): ?>
                     <div class="form-group span-3">
                         <label>Approved Borrow Request</label>
+                        <?php if ($approvedReqs->num_rows === 0): ?>
+                        <div style="padding:12px;background:var(--cream);border:1px solid var(--cream-border);border-radius:var(--radius-sm);font-size:13px;color:var(--text-muted);">
+                            <i class="fas fa-triangle-exclamation" style="color:#d97706;margin-right:6px;"></i>
+                            No approved requests without a transaction yet. <a href="borrow_requests.php" style="color:var(--maroon);font-weight:600;">Review requests →</a>
+                        </div>
+                        <input type="hidden" name="hdnRequest" value="0">
+                        <?php else: ?>
                         <select name="hdnRequest">
-                            <?php while($r=$approvedReqs->fetch_assoc()): ?>
+                            <?php $approvedReqs->data_seek(0); while($r=$approvedReqs->fetch_assoc()): ?>
                             <option value="<?php echo $r['RequestID']; ?>">#<?php echo $r['RequestID']; ?> — <?php echo htmlspecialchars($r['Name']); ?></option>
                             <?php endwhile; ?>
                         </select>
+                        <?php endif; ?>
                     </div>
                     <div class="form-group">
                         <label>Release Date/Time</label>
@@ -131,14 +298,15 @@ require_once 'includes/header.php';
                     </div>
                 </div>
                 <div style="margin-top:20px;display:flex;gap:10px;">
-                    <button type="submit" class="btn btn-primary"><i class="fas fa-save"></i> Save Transaction</button>
-                    <a href="transactions.php" class="btn btn-outline">Cancel</a>
+                    <button type="button" onclick="validateTransactionAndShowModal()" class="btn btn-primary"><i class="fas fa-save"></i> Save Transaction</button>
+                    <button type="button" onclick="showConfirmModal('transactions.php', 'Discard Changes', 'Are you sure you want to leave? Any unsaved changes will be lost.')" class="btn btn-outline">Cancel</button>
                 </div>
             </form>
         </div>
     </div>
     <?php endif; ?>
 
+    <?php if ($action === 'list'): ?>
     <div class="card">
         <div class="card-header"><div><h3>Transaction History</h3><p><?php echo $transactions->num_rows; ?> transaction(s)</p></div></div>
         <div class="table-wrapper">
@@ -161,8 +329,13 @@ require_once 'includes/header.php';
                             <span class="badge <?php echo $sc; ?>"><?php echo $row['Status']; ?></span>
                         </td>
                         <td>
-                            <a href="?action=edit&id=<?php echo $row['TransactionID']; ?>" class="btn btn-outline btn-sm"><i class="fas fa-pen"></i></a>
-                            <a href="?action=delete&id=<?php echo $row['TransactionID']; ?>" class="btn btn-danger btn-sm confirm-delete" style="margin-left:4px;"><i class="fas fa-trash"></i></a>
+                            <?php
+                            $canEdit = $isAdmin || ($row['OwnerUserID'] == $_SESSION['user_id']);
+                            $canDelete = $isAdmin; // Only admin can delete transactions
+                            ?>
+                            <?php if ($canEdit): ?><a href="?action=edit&id=<?php echo $row['TransactionID']; ?>" class="btn btn-outline btn-sm"><i class="fas fa-pen"></i></a><?php endif; ?>
+                                <?php if ($canDelete): ?><button type="button" onclick="showConfirmModal('?action=delete&id=<?php echo $row['TransactionID']; ?>', 'Delete Transaction', 'Are you sure you want to delete this transaction record?')" class="btn btn-danger btn-sm" style="margin-left:4px;"><i class="fas fa-trash"></i></button><?php endif; ?>
+                            <?php if (!$canEdit && !$canDelete): ?>—<?php endif; ?>
                         </td>
                     </tr>
                     <?php endwhile; else: ?>
@@ -172,7 +345,53 @@ require_once 'includes/header.php';
             </table>
         </div>
     </div>
+    <?php endif; ?>
 </div>
 </div>
+
+<div class="modal-overlay" id="confirmModalOverlay">
+    <div class="modal">
+        <div class="modal-header">
+            <h3 id="modalTitle">Confirm Action</h3>
+            <button type="button" class="btn-ghost" onclick="closeConfirmModal()"><i class="fas fa-xmark"></i></button>
+        </div>
+        <div class="modal-body">
+            <p id="modalMessage">Are you sure you want to proceed?</p>
+        </div>
+        <div class="modal-footer">
+            <button type="button" class="btn btn-outline" onclick="closeConfirmModal()">Cancel</button>
+            <a href="#" id="modalConfirmBtn" class="btn btn-danger">Confirm</a>
+        </div>
+    </div>
+</div>
+
+<script>
+function validateTransactionAndShowModal() {
+    const form = document.getElementById('transactionForm');
+    if (!form.checkValidity()) {
+        form.reportValidity();
+        return;
+    }
+    showConfirmModal('SUBMIT_FORM', 'Save Transaction', 'Are you sure you want to save this transaction?', 'btn-primary');
+}
+
+function showConfirmModal(url, title, message, btnClass = 'btn-danger') {
+    document.getElementById('modalTitle').innerText = title;
+    document.getElementById('modalMessage').innerText = message;
+    const confirmBtn = document.getElementById('modalConfirmBtn');
+    if (url === 'SUBMIT_FORM') {
+        confirmBtn.href = "javascript:void(0)";
+        confirmBtn.onclick = () => document.getElementById('transactionForm').submit();
+    } else {
+        confirmBtn.href = url;
+        confirmBtn.onclick = null;
+    }
+    confirmBtn.className = 'btn ' + btnClass;
+    document.getElementById('confirmModalOverlay').classList.add('open');
+}
+function closeConfirmModal() {
+    document.getElementById('confirmModalOverlay').classList.remove('open');
+}
+</script>
 
 <?php require_once 'includes/footer.php'; ?>

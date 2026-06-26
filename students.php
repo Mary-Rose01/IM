@@ -59,9 +59,19 @@ if ($search) {
     $s = $connection->real_escape_string($search);
     $where = "WHERE s.StudentID LIKE '%$s%' OR u.FirstName LIKE '%$s%' OR u.LastName LIKE '%$s%' OR s.Program LIKE '%$s%'";
 }
+
+// Pagination Logic
+$limit = 10;
+$p = max(1, intval($_GET['p'] ?? 1));
+$off = ($p - 1) * $limit;
+
+$totalCountResult = $connection->query("SELECT COUNT(*) c FROM tblstudent s JOIN tbluser u ON s.UserID = u.UserID $where");
+$totalCount = $totalCountResult->fetch_assoc()['c'];
+$totalPages = max(1, ceil($totalCount / $limit));
+
 $students = $connection->query(
     "SELECT s.*, CONCAT(u.FirstName,' ',u.MiddleName,' ',u.LastName) as FullName, u.Institutional_Email
-     FROM tblstudent s JOIN tbluser u ON s.UserID = u.UserID $where ORDER BY s.StudentID"
+     FROM tblstudent s JOIN tbluser u ON s.UserID = u.UserID $where ORDER BY s.StudentID LIMIT $limit OFFSET $off"
 );
 
 // Available users (for add)
@@ -92,10 +102,9 @@ require_once 'includes/header.php';
     <div class="card" style="max-width:660px;margin-bottom:24px;">
         <div class="card-header">
             <div><h3><?php echo $action==='edit'?'Edit Student':'Add Student'; ?></h3></div>
-            <a href="students.php" class="btn btn-outline btn-sm"><i class="fas fa-xmark"></i> Cancel</a>
         </div>
         <div class="card-body">
-            <form method="post">
+            <form method="post" id="studentForm">
                 <input type="hidden" name="hdnID" value="<?php echo htmlspecialchars($editRow['StudentID'] ?? ''); ?>">
                 <input type="hidden" name="hdnUserID" value="<?php echo $editRow['UserID'] ?? ''; ?>">
                 <div class="form-grid">
@@ -138,9 +147,9 @@ require_once 'includes/header.php';
                             <?php
                             $depts = [
                                 'College of Computer Studies',
-                                'College of Architecture and Engineering',
-                                'College of Nursing and Allied Health Sciences',
+                                'College of Engineering and Architecture',
                                 'College of Arts, Sciences and Education',
+                                'College of Nursing and Allied Health Sciences',
                                 'College of Management, Business and Accountancy',
                                 'College of Criminal Justice',
                             ];
@@ -151,17 +160,18 @@ require_once 'includes/header.php';
                     </div>
                 </div>
                 <div style="margin-top:20px;display:flex;gap:10px;">
-                    <button type="submit" class="btn btn-primary"><i class="fas fa-save"></i> <?php echo $action==='edit'?'Update':'Add'; ?> Student</button>
-                    <a href="students.php" class="btn btn-outline">Cancel</a>
+                    <button type="button" onclick="validateStudentAndShowModal()" class="btn btn-primary"><i class="fas fa-save"></i> <?php echo $action==='edit'?'Update':'Add'; ?> Student</button>
+                    <button type="button" onclick="showConfirmModal('students.php', 'Discard Changes', 'Are you sure you want to leave? Any unsaved changes will be lost.')" class="btn btn-outline">Cancel</button>
                 </div>
             </form>
         </div>
     </div>
     <?php endif; ?>
 
+    <?php if ($action === 'list'): ?>
     <div class="card">
         <div class="card-header">
-            <div><h3>All Students</h3><p><?php echo $students ? $students->num_rows : 0; ?> student(s)</p></div>
+            <div><h3>All Students</h3><p><?php echo $totalCount; ?> student(s)</p></div>
             <form method="get" style="display:flex;gap:8px;">
                 <div class="search-bar"><i class="fas fa-search"></i>
                     <input type="text" name="q" placeholder="Search..." value="<?php echo htmlspecialchars($search); ?>">
@@ -195,7 +205,7 @@ require_once 'includes/header.php';
                         <td style="font-size:12px;color:var(--gray-500);"><?php echo htmlspecialchars($row['Department']); ?></td>
                         <td>
                             <a href="?action=edit&id=<?php echo urlencode($row['StudentID']); ?>" class="btn btn-outline btn-sm"><i class="fas fa-pen"></i></a>
-                            <a href="?action=delete&id=<?php echo urlencode($row['StudentID']); ?>" class="btn btn-danger btn-sm confirm-delete" style="margin-left:4px;"><i class="fas fa-trash"></i></a>
+                            <button type="button" onclick="showConfirmModal('?action=delete&id=<?php echo urlencode($row['StudentID']); ?>', 'Delete Student', 'Are you sure you want to delete this student record?')" class="btn btn-danger btn-sm" style="margin-left:4px;"><i class="fas fa-trash"></i></button>
                         </td>
                     </tr>
                     <?php endwhile; else: ?>
@@ -204,8 +214,73 @@ require_once 'includes/header.php';
                 </tbody>
             </table>
         </div>
+
+        <!-- Pagination UI -->
+        <?php if ($totalPages >= 1): ?>
+        <div class="pagination" style="margin-top:0; border-top:1px solid var(--cream-border);">
+            <?php if ($p > 1): ?>
+                <a href="?p=<?php echo $p-1; ?>&q=<?php echo urlencode($search); ?>" class="page-link" style="width:auto; padding:0 15px; margin-right:5px;"><i class="fas fa-chevron-left"></i> Back</a>
+            <?php endif; ?>
+            <?php for ($i = 1; $i <= $totalPages; $i++): ?>
+                <a href="?p=<?php echo $i; ?>&q=<?php echo urlencode($search); ?>" class="page-link <?php echo $i == $p ? 'active' : ''; ?>"><?php echo $i; ?></a>
+            <?php endfor; ?>
+            <?php if ($p < $totalPages): ?>
+                <a href="?p=<?php echo $p+1; ?>&q=<?php echo urlencode($search); ?>" class="page-link" style="width:auto; padding:0 15px; margin-left:5px;">Next <i class="fas fa-chevron-right"></i></a>
+            <?php endif; ?>
+            <div class="page-info">Showing page <?php echo $p; ?> of <?php echo $totalPages; ?></div>
+        </div>
+        <?php endif; ?>
+    </div>
+    <?php endif; ?>
+</div>
+</div>
+
+<div class="modal-overlay" id="confirmModalOverlay">
+    <div class="modal">
+        <div class="modal-header">
+            <h3 id="modalTitle">Confirm Action</h3>
+            <button type="button" class="btn-ghost" onclick="closeConfirmModal()"><i class="fas fa-xmark"></i></button>
+        </div>
+        <div class="modal-body">
+            <p id="modalMessage">Are you sure you want to proceed?</p>
+        </div>
+        <div class="modal-footer">
+            <button type="button" class="btn btn-outline" onclick="closeConfirmModal()">Cancel</button>
+            <a href="#" id="modalConfirmBtn" class="btn btn-danger">Confirm</a>
+        </div>
     </div>
 </div>
-</div>
+
+<script>
+function validateStudentAndShowModal() {
+    const form = document.getElementById('studentForm');
+    if (!form.checkValidity()) {
+        form.reportValidity();
+        return;
+    }
+    showConfirmModal('SUBMIT_FORM', 'Save Student', 'Are you sure you want to save this student record?', 'btn-primary');
+}
+
+function showConfirmModal(url, title, message, btnClass = 'btn-danger') {
+    document.getElementById('modalTitle').innerText = title;
+    document.getElementById('modalMessage').innerText = message;
+    const confirmBtn = document.getElementById('modalConfirmBtn');
+
+    if (url === 'SUBMIT_FORM') {
+        confirmBtn.href = "javascript:void(0)";
+        confirmBtn.onclick = () => document.getElementById('studentForm').submit();
+    } else {
+        confirmBtn.href = url;
+        confirmBtn.onclick = null;
+    }
+
+    confirmBtn.className = 'btn ' + btnClass;
+    document.getElementById('confirmModalOverlay').classList.add('open');
+}
+
+function closeConfirmModal() {
+    document.getElementById('confirmModalOverlay').classList.remove('open');
+}
+</script>
 
 <?php require_once 'includes/footer.php'; ?>

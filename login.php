@@ -1,7 +1,7 @@
 <?php
 require_once 'connect.php';
 
-// fix the bug
+// fix the bug in Login
 if (isLoggedIn()) { header('Location: dashboard.php'); exit; }
 
 $error = '';
@@ -50,9 +50,12 @@ require_once 'includes/header.php';
         <!-- Colored panel — left on login -->
         <div class="auth-panel auth-panel--left">
             <div class="auth-panel-inner">
-                <img src="https://www.figma.com/api/mcp/asset/d0a1aca0-7d6e-412b-ae4d-37b9720ca456"
-                     alt="CIT-U Logo" class="panel-logo"
-                     onerror="this.style.display='none'">
+                <div class="auth-logo-placeholder" id="logoPlaceholder" style="display:none; margin-bottom:20px;">
+                    <i class="fas fa-university"></i>
+                </div>
+                <img src="img/citlogo.png"
+                     alt="" class="panel-logo"
+                     onerror="this.style.display='none'; document.getElementById('logoPlaceholder').style.display='flex';">
                 <div class="panel-brand">HUWAM</div>
                 <p class="panel-sub">A peer-to-peer item borrowing platform built exclusively for CIT-U students.</p>
                 <a href="register.php" class="panel-btn">Sign Up</a>
@@ -85,11 +88,6 @@ require_once 'includes/header.php';
 
                     <button type="submit" name="btnLogin" class="btn-submit">Log In</button>
                 </form>
-
-                <div class="alert alert-info" style="margin-top:20px;font-size:12px;">
-                    <i class="fas fa-circle-info"></i>
-                    <div>Default admin — <strong>username:</strong> <code>admin</code> / <strong>password:</strong> <code>password</code></div>
-                </div>
 
                 <!-- Mobile only link -->
                 <p class="mobile-switch">Don't have an account? <a href="register.php">Sign Up</a></p>

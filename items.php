@@ -3,7 +3,7 @@ require_once 'connect.php';
 requireLogin();
 
 $action  = $_GET['action'] ?? 'list';
-$msg     = '';
+$msg     = $_GET['msg'] ?? '';
 $msgType = 'success';
 $isAdmin = ($_SESSION['role'] === 'admin');
 
@@ -13,8 +13,11 @@ if ($action === 'delete' && isset($_GET['id'])) {
     // Only admin or owner can delete
     $check = $connection->query("SELECT OwnerUserID FROM tblitem WHERE ItemID = $id")->fetch_assoc();
     if ($isAdmin || ($check && $check['OwnerUserID'] == $_SESSION['user_id'])) {
-        $connection->query("DELETE FROM tblitem WHERE ItemID = $id");
-        $msg = 'Item deleted.';
+        if ($connection->query("DELETE FROM tblitem WHERE ItemID = $id")) {
+            $msg = 'Item deleted.';
+        } else {
+            $msg = 'Cannot delete: this item has active slots or bookings.'; $msgType = 'danger';
+        }
     } else {
         $msg = 'Permission denied.'; $msgType = 'danger';
     }
@@ -31,22 +34,76 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $avail  = trim($_POST['txtavail'] ?? 'Available');
     $owner  = $isAdmin ? intval($_POST['hdnOwner'] ?? $_SESSION['user_id']) : $_SESSION['user_id'];
 
-    if ($id === 0) {
-        $stmt = $connection->prepare(
-            "INSERT INTO tblitem (Item_Name,Description,Category,Status,Availability_Status,OwnerUserID) VALUES (?,?,?,?,?,?)"
-        );
-        $stmt->bind_param('sssssi', $name,$desc,$cat,$status,$avail,$owner);
-        if ($stmt->execute()) $msg = 'Item added successfully.';
-        else { $msg = 'Error: '.$stmt->error; $msgType = 'danger'; }
-        $stmt->close();
-    } else {
-        $stmt = $connection->prepare(
-            "UPDATE tblitem SET Item_Name=?,Description=?,Category=?,Status=?,Availability_Status=? WHERE ItemID=?"
-        );
-        $stmt->bind_param('sssssi', $name,$desc,$cat,$status,$avail,$id);
-        if ($stmt->execute()) $msg = 'Item updated.';
-        else { $msg = 'Error: '.$stmt->error; $msgType = 'danger'; }
-        $stmt->close();
+    // --- IMAGE UPLOAD HANDLING ---
+    $imageName = null; // null = keep existing / no image
+    if (!empty($_FILES['itemImage']['name'])) {
+        $allowed = ['image/jpeg','image/png','image/webp','image/gif'];
+        $fileType = $_FILES['itemImage']['type'];
+        $fileSize = $_FILES['itemImage']['size'];
+        if (!in_array($fileType, $allowed)) {
+            $msg = 'Invalid image type. Only JPG, PNG, WEBP, GIF allowed.'; $msgType = 'danger';
+        } elseif ($fileSize > 5 * 1024 * 1024) {
+            $msg = 'Image must be under 5MB.'; $msgType = 'danger';
+        } else {
+            $uploadDir = 'uploads/items/';
+            if (!is_dir($uploadDir)) mkdir($uploadDir, 0755, true);
+            $ext = pathinfo($_FILES['itemImage']['name'], PATHINFO_EXTENSION);
+            $imageName = uniqid('item_') . '.' . strtolower($ext);
+            if (!move_uploaded_file($_FILES['itemImage']['tmp_name'], $uploadDir . $imageName)) {
+                $msg = 'Failed to save image. Check folder permissions.'; $msgType = 'danger';
+                $imageName = null;
+            }
+        }
+    }
+
+    if (empty($msg)) { // only proceed if no image error
+        if ($id === 0) {
+            $stmt = $connection->prepare(
+                "INSERT INTO tblitem (Item_Name,Description,Category,Image,Status,Availability_Status,OwnerUserID) VALUES (?,?,?,?,?,?,?)"
+            );
+            $stmt->bind_param('ssssssi', $name,$desc,$cat,$imageName,$status,$avail,$owner);
+            if ($stmt->execute()) {
+                $newItemID  = $connection->insert_id;
+                $stmt->close();
+                $slotStarts = $_POST['slot_start'] ?? [];
+                $slotEnds   = $_POST['slot_end']   ?? [];
+                $slotCount  = 0;
+                foreach ($slotStarts as $i => $slotStart) {
+                    $slotStart = trim($slotStart);
+                    $slotEnd   = trim($slotEnds[$i] ?? '');
+                    if ($slotStart && $slotEnd && strtotime($slotEnd) > strtotime($slotStart)) {
+                        $ss = $connection->prepare("INSERT INTO tblavailabilityslot (ItemID, Start_DateTime, End_DateTime, isReserved) VALUES (?, ?, ?, 0)");
+                        $ss->bind_param('iss', $newItemID, $slotStart, $slotEnd);
+                        $ss->execute();
+                        $ss->close();
+                        $slotCount++;
+                    }
+                }
+                $redirectMsg = $slotCount > 0 ? "Item and $slotCount slot(s) added successfully." : 'Item added successfully.';
+                header("Location: items.php?msg=" . urlencode($redirectMsg));
+                exit;
+            } else {
+                $msg = 'Error: '.$stmt->error; $msgType = 'danger';
+            }
+            $stmt->close();
+        } else {
+            // Security Check: Only Admin or Owner can Update
+            $check = $connection->query("SELECT OwnerUserID, Image FROM tblitem WHERE ItemID = $id")->fetch_assoc();
+            if ($isAdmin || ($check && $check['OwnerUserID'] == $_SESSION['user_id'])) {
+                // If no new image uploaded, keep the old one
+                if ($imageName === null) $imageName = $check['Image'];
+                $stmt = $connection->prepare(
+                    "UPDATE tblitem SET Item_Name=?,Description=?,Category=?,Image=?,Status=?,Availability_Status=? WHERE ItemID=?"
+                );
+                $stmt->bind_param('ssssssi', $name,$desc,$cat,$imageName,$status,$avail,$id);
+                if ($stmt->execute()) $msg = 'Item updated.';
+                else { $msg = 'Error: '.$stmt->error; $msgType = 'danger'; }
+                $stmt->close();
+            } else {
+                $msg = 'Permission denied.'; 
+                $msgType = 'danger';
+            }
+        }
     }
     $action = 'list';
 }
@@ -56,19 +113,62 @@ if ($action === 'edit' && isset($_GET['id'])) {
     $id = intval($_GET['id']);
     $r = $connection->query("SELECT * FROM tblitem WHERE ItemID = $id");
     $editRow = $r->fetch_assoc();
+    // Security Check: Only Admin or Owner can see Edit Form
+    if (!$isAdmin && (!$editRow || $editRow['OwnerUserID'] != $_SESSION['user_id'])) {
+        header("Location: items.php?msg=Permission+denied&msgType=danger");
+        exit;
+    }
+}
+
+$viewRow = null;
+if ($action === 'view' && isset($_GET['id'])) {
+    $id = intval($_GET['id']);
+    $r = $connection->query(
+        "SELECT i.*, CONCAT(u.FirstName,' ',u.LastName) as OwnerName
+         FROM tblitem i JOIN tbluser u ON i.OwnerUserID = u.UserID
+         WHERE i.ItemID = $id"
+    );
+    $viewRow = $r->fetch_assoc();
+    if (!$viewRow) {
+        header("Location: items.php?msg=Item+not+found&msgType=danger");
+        exit;
+    }
 }
 
 // List
-$search = trim($_GET['q'] ?? '');
+$search     = trim($_GET['q'] ?? '');
 $filterAvail = $_GET['avail'] ?? '';
-$where = $isAdmin ? '1=1' : "i.OwnerUserID = {$_SESSION['user_id']}";
-if ($search) { $s = $connection->real_escape_string($search); $where .= " AND (i.Item_Name LIKE '%$s%' OR i.Category LIKE '%$s%')"; }
+$filterCat   = $_GET['cat'] ?? '';
+$viewMine    = isset($_GET['view']) && $_GET['view'] === 'mine';
+
+// Browse mode: show all non-archived items from everyone.
+// My Items mode (view=mine): show only items the logged-in user owns.
+// Admin: always sees everything regardless of mode.
+if ($isAdmin) {
+    $where = '1=1';
+} elseif ($viewMine) {
+    $where = "i.OwnerUserID = {$_SESSION['user_id']} AND i.Availability_Status != 'Archived'";
+} else {
+    $where = "i.Availability_Status != 'Archived'";
+}
+
+if ($search)      { $s  = $connection->real_escape_string($search);      $where .= " AND (i.Item_Name LIKE '%$s%' OR i.Category LIKE '%$s%' OR i.Description LIKE '%$s%')"; }
 if ($filterAvail) { $fa = $connection->real_escape_string($filterAvail); $where .= " AND i.Availability_Status = '$fa'"; }
+if ($filterCat)   { $fc = $connection->real_escape_string($filterCat);   $where .= " AND i.Category = '$fc'"; }
+
+// Pagination Logic
+$limit = 10;
+$p = max(1, intval($_GET['p'] ?? 1));
+$off = ($p - 1) * $limit;
+
+$totalCountResult = $connection->query("SELECT COUNT(*) c FROM tblitem i WHERE $where");
+$totalCount = $totalCountResult->fetch_assoc()['c'];
+$totalPages = max(1, ceil($totalCount / $limit));
 
 $items = $connection->query(
     "SELECT i.*, CONCAT(u.FirstName,' ',u.LastName) as OwnerName
      FROM tblitem i JOIN tbluser u ON i.OwnerUserID = u.UserID
-     WHERE $where ORDER BY i.CreatedAt DESC"
+     WHERE $where ORDER BY i.CreatedAt DESC LIMIT $limit OFFSET $off"
 );
 
 $owners = $isAdmin ? $connection->query("SELECT UserID, CONCAT(FirstName,' ',LastName) as Name FROM tbluser WHERE isActive=1 ORDER BY FirstName") : null;
@@ -82,8 +182,18 @@ require_once 'includes/header.php';
 <div class="page-wrapper">
 
 <div class="page-header">
-    <div class="page-title"><h1>Items <?php echo !$isAdmin ? '— My Listings' : ''; ?></h1><p>Manage borrowable items in the system</p></div>
-    <div style="display:flex;gap:10px;"><a href="?action=add" class="btn btn-primary btn-sm"><i class="fas fa-plus"></i> Add Item</a></div>
+    <div class="page-title">
+        <h1><?php echo $viewMine ? 'My Items' : 'Browse Items'; ?></h1>
+        <p><?php echo $viewMine ? 'Items you have listed for borrowing' : 'All items available to borrow'; ?></p>
+    </div>
+    <?php if ($action !== 'add' && $action !== 'edit'): ?>
+    <div style="display:flex;gap:10px;flex-wrap:wrap;">
+        <a href="items.php" class="btn <?php echo !$viewMine ? 'btn-primary' : 'btn-outline'; ?> btn-sm"><i class="fas fa-th"></i> Browse All</a>
+        <a href="?view=mine" class="btn <?php echo $viewMine ? 'btn-primary' : 'btn-outline'; ?> btn-sm"><i class="fas fa-box"></i> My Items</a>
+        <a href="?action=add" class="btn btn-outline btn-sm"><i class="fas fa-plus"></i> Add Item</a>
+        <a href="slots.php" class="btn btn-outline btn-sm"><i class="fas fa-calendar-plus"></i> Manage Slots</a>
+    </div>
+    <?php endif; ?>
 </div>
     <?php if ($msg): ?>
     <div class="alert alert-<?php echo $msgType; ?> auto-dismiss"><i class="fas fa-circle-check"></i> <?php echo $msg; ?></div>
@@ -93,10 +203,9 @@ require_once 'includes/header.php';
     <div class="card" style="max-width:680px;margin-bottom:24px;">
         <div class="card-header">
             <div><h3><?php echo $action==='edit'?'Edit Item':'Add New Item'; ?></h3></div>
-            <a href="items.php" class="btn btn-outline btn-sm"><i class="fas fa-xmark"></i> Cancel</a>
         </div>
         <div class="card-body">
-            <form method="post">
+            <form method="post" id="itemForm" enctype="multipart/form-data">
                 <input type="hidden" name="hdnID" value="<?php echo $editRow['ItemID'] ?? 0; ?>">
                 <div class="form-grid">
                     <div class="form-group span-2">
@@ -142,24 +251,113 @@ require_once 'includes/header.php';
                         <label>Description</label>
                         <textarea name="txtdesc"><?php echo htmlspecialchars($editRow['Description'] ?? ''); ?></textarea>
                     </div>
+                    <div class="form-group span-2">
+                        <label>Item Image <small style="color:var(--gray-400);font-weight:400;">(JPG, PNG, WEBP — max 5MB<?php echo ($action==='edit' && !empty($editRow['Image'])) ? '; leave blank to keep current' : ''; ?>)</small></label>
+                        <?php if ($action === 'edit' && !empty($editRow['Image'])): ?>
+                        <div style="margin-bottom:8px;">
+                            <img src="uploads/items/<?php echo htmlspecialchars($editRow['Image']); ?>" alt="Current image" style="max-height:100px;border-radius:var(--radius-sm);border:1px solid var(--cream-border);">
+                        </div>
+                        <?php endif; ?>
+                        <input type="file" name="itemImage" accept="image/jpeg,image/png,image/webp,image/gif" style="padding:6px;">
+                    </div>
                 </div>
-                <div style="margin-top:20px;display:flex;gap:10px;">
-                    <button type="submit" class="btn btn-primary"><i class="fas fa-save"></i> Save Item</button>
-                    <a href="items.php" class="btn btn-outline">Cancel</a>
+                <?php if ($action === 'add'): ?>
+                <div style="margin-top:24px;border-top:1px solid var(--cream-border);padding-top:20px;">
+                    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;">
+                        <h4 style="font-size:14px;font-weight:700;color:var(--text-dark);margin:0;"><i class="fas fa-calendar-plus" style="color:var(--maroon);margin-right:6px;"></i>Availability Slots</h4>
+                        <button type="button" onclick="addSlotRow()" class="btn btn-outline btn-sm"><i class="fas fa-plus"></i> Add Slot</button>
+                    </div>
+                    <div id="slotRows">
+                        <div class="slot-row" style="display:grid;grid-template-columns:1fr 1fr 32px;gap:10px;align-items:end;margin-bottom:10px;">
+                            <div class="form-group" style="margin:0;">
+                                <label style="font-size:12px;">Available From</label>
+                                <input type="datetime-local" name="slot_start[]" min="<?php echo date('Y-m-d\TH:i'); ?>">
+                            </div>
+                            <div class="form-group" style="margin:0;">
+                                <label style="font-size:12px;">Available Until</label>
+                                <input type="datetime-local" name="slot_end[]" min="<?php echo date('Y-m-d\TH:i'); ?>">
+                            </div>
+                            <div></div>
+                        </div>
+                    </div>
+                </div>
+                <?php endif; ?>
+                <div style="margin-top:20px;display:flex;gap:10px;flex-wrap:wrap;">
+                    <button type="button" onclick="validateAndShowModal()" class="btn btn-primary"><i class="fas fa-save"></i> Save Item</button>
+                    <button type="button" onclick="showConfirmModal('items.php', 'Discard Changes', 'Are you sure you want to leave? Any unsaved changes will be lost.')" class="btn btn-outline">Cancel</button>
                 </div>
             </form>
+        </div>
+    </div>
+
+    <?php endif; ?>
+
+    <?php if ($action === 'view' && $viewRow): ?>
+    <div class="card" style="max-width:850px;margin-bottom:24px;">
+        <div class="card-header">
+            <div>
+                <span class="badge badge-gray" style="margin-bottom:4px;"><?php echo htmlspecialchars($viewRow['Category'] ?? 'Item'); ?></span>
+                <h3><?php echo htmlspecialchars($viewRow['Item_Name']); ?></h3>
+            </div>
+            <a href="items.php" class="btn btn-outline btn-sm"><i class="fas fa-arrow-left"></i> Back to Catalog</a>
+        </div>
+        <div class="card-body">
+            <div style="max-width: 650px;">
+                    <?php if (!empty($viewRow['Image'])): ?>
+                    <div style="margin-bottom:20px;">
+                        <img src="uploads/items/<?php echo htmlspecialchars($viewRow['Image']); ?>" alt="<?php echo htmlspecialchars($viewRow['Item_Name']); ?>" style="max-width:100%;max-height:260px;border-radius:var(--radius-lg);border:1px solid var(--cream-border);object-fit:cover;">
+                    </div>
+                    <?php endif; ?>
+                    <div style="margin-bottom:20px;">
+                        <label style="color:var(--text-muted); font-size:11px; text-transform:uppercase; letter-spacing:0.5px;">Item Status</label>
+                        <div style="margin-top:6px; display:flex; gap:8px;">
+                            <?php $ac=$viewRow['Availability_Status']==='Available'?'badge-success':($viewRow['Availability_Status']==='Borrowed'?'badge-warning':($viewRow['Availability_Status']==='Archived'?'badge-gray':'badge-info')); ?>
+                            <span class="badge <?php echo $ac; ?>" style="font-size:12px; padding:6px 14px;"><?php echo $viewRow['Availability_Status']; ?></span>
+                            <?php $sc=$viewRow['Status']==='Good'?'badge-success':($viewRow['Status']==='Lost'?'badge-danger':'badge-warning'); ?>
+                            <span class="badge <?php echo $sc; ?>" style="font-size:12px; padding:6px 14px;">Condition: <?php echo $viewRow['Status']; ?></span>
+                        </div>
+                    </div>
+                    <div style="margin-bottom:20px;">
+                        <label style="color:var(--text-muted); font-size:11px; text-transform:uppercase; letter-spacing:0.5px;">Description</label>
+                        <p style="margin-top:6px; color:var(--text-dark); line-height:1.6; font-size:15px;"><?php echo nl2br(htmlspecialchars($viewRow['Description'] ?: 'No description provided for this item.')); ?></p>
+                    </div>
+                    <div style="margin-bottom:24px; padding:16px; background:var(--cream); border-radius:var(--radius-sm); border-left:4px solid var(--maroon);">
+                        <div style="font-size:12px; color:var(--text-muted);">Owned by</div>
+                        <div style="font-weight:700; color:var(--text-dark); font-size:16px;"><?php echo htmlspecialchars($viewRow['OwnerName']); ?></div>
+                        <div style="font-size:11px; color:var(--text-muted); margin-top:2px;">Listed on <?php echo date('M j, Y', strtotime($viewRow['CreatedAt'])); ?></div>
+                    </div>
+                    <div style="display:flex; gap:12px;">
+                        <?php if ($viewRow['Availability_Status'] === 'Available' && $viewRow['OwnerUserID'] != $_SESSION['user_id']): ?>
+                        <a href="borrow_requests.php?action=add&item_id=<?php echo $viewRow['ItemID']; ?>" class="btn btn-primary btn-lg"><i class="fas fa-hand-holding"></i> Request to Borrow</a>
+                <?php if ($isAdmin || $viewRow['OwnerUserID'] == $_SESSION['user_id']): ?>
+                <a href="slots.php?action=add&item_id=<?php echo $viewRow['ItemID']; ?>" class="btn btn-outline btn-lg"><i class="fas fa-calendar-plus"></i> Add Slot</a>
+                <a href="slots.php?item_id_filter=<?php echo $viewRow['ItemID']; ?>" class="btn btn-outline btn-lg"><i class="fas fa-calendar"></i> View Slots</a>
+                <?php endif; ?>
+                        <?php endif; ?>
+                        <?php if ($isAdmin || $viewRow['OwnerUserID'] == $_SESSION['user_id']): ?>
+                        <a href="?action=edit&id=<?php echo $viewRow['ItemID']; ?>" class="btn btn-outline"><i class="fas fa-pen"></i> Edit Item</a>
+                        <?php endif; ?>
+                    </div>
         </div>
     </div>
     <?php endif; ?>
 
     <!-- Filters -->
+    <?php if ($action === 'list'): ?>
     <div class="card">
         <div class="card-header">
-            <div><h3>Item Catalog</h3><p><?php echo $items ? $items->num_rows : 0; ?> item(s)</p></div>
+            <div><h3>Item Catalog</h3><p><?php echo $totalCount; ?> item(s)</p></div>
             <form method="get" style="display:flex;gap:8px;align-items:center;">
+                <?php if ($viewMine): ?><input type="hidden" name="view" value="mine"><?php endif; ?>
                 <div class="search-bar"><i class="fas fa-search"></i>
                     <input type="text" name="q" placeholder="Search items..." value="<?php echo htmlspecialchars($search); ?>">
                 </div>
+                <select name="cat" style="padding:7px 10px;border:1.5px solid var(--gray-300);border-radius:var(--radius-sm);font-size:13px;">
+                    <option value="">All Categories</option>
+                    <?php foreach(['Equipment','Apparel','Tool','Electronics','Furniture','Others'] as $c): ?>
+                    <option value="<?php echo $c; ?>" <?php if($filterCat===$c) echo 'selected'; ?>><?php echo $c; ?></option>
+                    <?php endforeach; ?>
+                </select>
                 <select name="avail" style="padding:7px 10px;border:1.5px solid var(--gray-300);border-radius:var(--radius-sm);font-size:13px;">
                     <option value="">All Status</option>
                     <?php foreach(['Available','Borrowed','Reserved','Archived'] as $a): ?>
@@ -183,8 +381,17 @@ require_once 'includes/header.php';
                     <tr>
                         <td class="mono"><?php echo $row['ItemID']; ?></td>
                         <td>
-                            <div style="font-weight:600;"><?php echo htmlspecialchars($row['Item_Name']); ?></div>
-                            <?php if($row['Description']): ?><div style="font-size:11px;color:var(--gray-400);"><?php echo htmlspecialchars(substr($row['Description'],0,50)); ?>...</div><?php endif; ?>
+                            <div style="display:flex;align-items:center;gap:10px;">
+                                <?php if(!empty($row['Image'])): ?>
+                                <img src="uploads/items/<?php echo htmlspecialchars($row['Image']); ?>" alt="" style="width:38px;height:38px;object-fit:cover;border-radius:var(--radius-sm);border:1px solid var(--cream-border);flex-shrink:0;">
+                                <?php else: ?>
+                                <div style="width:38px;height:38px;background:var(--cream-dark);border-radius:var(--radius-sm);display:flex;align-items:center;justify-content:center;flex-shrink:0;"><i class="fas fa-box" style="color:var(--gray-400);font-size:14px;"></i></div>
+                                <?php endif; ?>
+                                <div>
+                                    <div style="font-weight:600;"><?php echo htmlspecialchars($row['Item_Name']); ?></div>
+                                    <?php if($row['Description']): ?><div style="font-size:11px;color:var(--gray-400);"><?php echo htmlspecialchars(substr($row['Description'],0,50)); ?>...</div><?php endif; ?>
+                                </div>
+                            </div>
                         </td>
                         <td><?php if($row['Category']): ?><span class="badge badge-gray"><?php echo $row['Category']; ?></span><?php else: ?>—<?php endif; ?></td>
                         <td>
@@ -198,8 +405,12 @@ require_once 'includes/header.php';
                         <td style="font-size:12px;"><?php echo htmlspecialchars($row['OwnerName']); ?></td>
                         <td style="font-size:12px;color:var(--gray-500);"><?php echo date('M j, Y', strtotime($row['CreatedAt'])); ?></td>
                         <td>
+                            <?php if ($isAdmin || $row['OwnerUserID'] == $_SESSION['user_id']): ?>
                             <a href="?action=edit&id=<?php echo $row['ItemID']; ?>" class="btn btn-outline btn-sm"><i class="fas fa-pen"></i></a>
-                            <a href="?action=delete&id=<?php echo $row['ItemID']; ?>" class="btn btn-danger btn-sm confirm-delete" style="margin-left:4px;"><i class="fas fa-trash"></i></a>
+                            <button type="button" onclick="showConfirmModal('?action=delete&id=<?php echo $row['ItemID']; ?>', 'Delete Item', 'Are you sure you want to delete this item? This action cannot be undone.')" class="btn btn-danger btn-sm" style="margin-left:4px;"><i class="fas fa-trash"></i></button>
+                            <?php elseif ($row['Availability_Status'] === 'Available'): ?>
+                            <a href="borrow_requests.php?action=add&item_id=<?php echo $row['ItemID']; ?>" class="btn btn-success btn-sm"><i class="fas fa-hand-holding"></i> Borrow</a>
+                            <?php endif; ?>
                         </td>
                     </tr>
                     <?php endwhile; else: ?>
@@ -208,8 +419,95 @@ require_once 'includes/header.php';
                 </tbody>
             </table>
         </div>
+
+        <!-- Pagination UI -->
+        <?php if ($totalPages >= 1): ?>
+        <div class="pagination" style="margin-top:0; border-top:1px solid var(--cream-border);">
+            <?php if ($p > 1): ?>
+                <a href="?p=<?php echo $p-1; ?>&q=<?php echo urlencode($search); ?>&avail=<?php echo urlencode($filterAvail); ?>&cat=<?php echo urlencode($filterCat); ?><?php echo $viewMine?'&view=mine':''; ?>" class="page-link" style="width:auto; padding:0 15px; margin-right:5px;"><i class="fas fa-chevron-left"></i> Back</a>
+            <?php endif; ?>
+            <?php for ($i = 1; $i <= $totalPages; $i++): ?>
+                <a href="?p=<?php echo $i; ?>&q=<?php echo urlencode($search); ?>&avail=<?php echo urlencode($filterAvail); ?>&cat=<?php echo urlencode($filterCat); ?><?php echo $viewMine?'&view=mine':''; ?>" class="page-link <?php echo $i == $p ? 'active' : ''; ?>"><?php echo $i; ?></a>
+            <?php endfor; ?>
+            <?php if ($p < $totalPages): ?>
+                <a href="?p=<?php echo $p+1; ?>&q=<?php echo urlencode($search); ?>&avail=<?php echo urlencode($filterAvail); ?>&cat=<?php echo urlencode($filterCat); ?><?php echo $viewMine?'&view=mine':''; ?>" class="page-link" style="width:auto; padding:0 15px; margin-left:5px;">Next <i class="fas fa-chevron-right"></i></a>
+            <?php endif; ?>
+            <div class="page-info">Showing page <?php echo $p; ?> of <?php echo $totalPages; ?></div>
+        </div>
+        <?php endif; ?>
+    </div>
+    <?php endif; ?>
+</div>
+</div>
+
+<div class="modal-overlay" id="confirmModalOverlay">
+    <div class="modal">
+        <div class="modal-header">
+            <h3 id="modalTitle">Confirm Action</h3>
+            <button type="button" class="btn-ghost" onclick="closeConfirmModal()"><i class="fas fa-xmark"></i></button>
+        </div>
+        <div class="modal-body">
+            <p id="modalMessage">Are you sure you want to proceed?</p>
+        </div>
+        <div class="modal-footer">
+            <button type="button" class="btn btn-outline" onclick="closeConfirmModal()">Cancel</button>
+            <a href="#" id="modalConfirmBtn" class="btn btn-danger">Confirm</a>
+        </div>
     </div>
 </div>
-</div>
+
+<script>
+function validateAndShowModal() {
+    const form = document.getElementById('itemForm');
+    if (!form.checkValidity()) {
+        form.reportValidity();
+        return;
+    }
+    showConfirmModal('SUBMIT_FORM', 'Save Item', 'Are you sure you want to save this item?', 'btn-primary');
+}
+
+function showConfirmModal(url, title, message, btnClass = 'btn-danger') {
+    document.getElementById('modalTitle').innerText = title;
+    document.getElementById('modalMessage').innerText = message;
+    const confirmBtn = document.getElementById('modalConfirmBtn');
+    
+    if (url === 'SUBMIT_FORM') {
+        confirmBtn.href = "javascript:void(0)";
+        confirmBtn.onclick = () => document.getElementById('itemForm').submit();
+    } else {
+        confirmBtn.href = url;
+        confirmBtn.onclick = null;
+    }
+    
+    confirmBtn.className = 'btn ' + btnClass;
+    document.getElementById('confirmModalOverlay').classList.add('open');
+}
+function closeConfirmModal() {
+    document.getElementById('confirmModalOverlay').classList.remove('open');
+}
+
+// ---- Multi-slot row management ----
+const minDt = '<?php echo date('Y-m-d\TH:i'); ?>';
+function addSlotRow() {
+    const container = document.getElementById('slotRows');
+    if (!container) return;
+    const row = document.createElement('div');
+    row.className = 'slot-row';
+    row.style.cssText = 'display:grid;grid-template-columns:1fr 1fr 32px;gap:10px;align-items:end;margin-bottom:10px;';
+    row.innerHTML =
+        '<div class="form-group" style="margin:0;">' +
+            '<label style="font-size:12px;">Available From</label>' +
+            '<input type="datetime-local" name="slot_start[]" min="' + minDt + '">' +
+        '</div>' +
+        '<div class="form-group" style="margin:0;">' +
+            '<label style="font-size:12px;">Available Until</label>' +
+            '<input type="datetime-local" name="slot_end[]" min="' + minDt + '">' +
+        '</div>' +
+        '<div style="padding-bottom:1px;">' +
+            '<button type="button" onclick="this.closest(\'.slot-row\').remove()" class="btn btn-danger btn-sm" style="padding:7px 10px;"><i class="fas fa-xmark"></i></button>' +
+        '</div>';
+    container.appendChild(row);
+}
+</script>
 
 <?php require_once 'includes/footer.php'; ?>

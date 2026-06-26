@@ -176,11 +176,12 @@ require_once 'includes/header.php';
                                 <i class="fas fa-university input-icon"></i>
                                 <select name="txtdepartment" style="padding-left:40px;">
                                     <option value="">-- Select Department --</option>
-                                    <option value="CCS" <?php echo ($department == 'CCS') ? 'selected' : ''; ?>>College of Computer Studies</option>
-                                    <option value="CEA" <?php echo ($department == 'CEA') ? 'selected' : ''; ?>>College of Engineering and Architecture</option>
-                                    <option value="CASE" <?php echo ($department == 'CASE') ? 'selected' : ''; ?>>College of Arts, Sciences and Education</option>
-                                    <option value="CNAHS" <?php echo ($department == 'CNAHS') ? 'selected' : ''; ?>>College of Nursing and Allied Health Sciences</option>
-                                    <option value="CMBA" <?php echo ($department == 'CMBA') ? 'selected' : ''; ?>>College of Management, Business and Accountancy</option>
+                                    <option value="College of Computer Studies" <?php echo ($department == 'College of Computer Studies') ? 'selected' : ''; ?>>College of Computer Studies</option>
+                                    <option value="College of Engineering and Architecture" <?php echo ($department == 'College of Engineering and Architecture') ? 'selected' : ''; ?>>College of Engineering and Architecture</option>
+                                    <option value="College of Arts, Sciences and Education" <?php echo ($department == 'College of Arts, Sciences and Education') ? 'selected' : ''; ?>>College of Arts, Sciences and Education</option>
+                                    <option value="College of Nursing and Allied Health Sciences" <?php echo ($department == 'College of Nursing and Allied Health Sciences') ? 'selected' : ''; ?>>College of Nursing and Allied Health Sciences</option>
+                                    <option value="College of Management, Business and Accountancy" <?php echo ($department == 'College of Management, Business and Accountancy') ? 'selected' : ''; ?>>College of Management, Business and Accountancy</option>
+                                    <option value="College of Criminal Justice" <?php echo ($department == 'College of Criminal Justice') ? 'selected' : ''; ?>>College of Criminal Justice</option>
                                 </select>
                             </div>
                         </div>
@@ -205,7 +206,12 @@ require_once 'includes/header.php';
 
         <div class="auth-panel auth-panel--right">
             <div class="auth-panel-inner">
-                <img src="https://www.figma.com/api/mcp/asset/d0a1aca0-7d6e-412b-ae4d-37b9720ca456" alt="CIT-U Logo" class="panel-logo" style="width: 120px; margin-bottom: 20px;">
+                <div class="auth-logo-placeholder" id="logoPlaceholder" style="display:none; margin-bottom:20px;">
+                    <i class="fas fa-university"></i>
+                </div>
+                <img src="img/citlogo.png" 
+                     alt="" class="panel-logo"
+                     onerror="this.style.display='none'; document.getElementById('logoPlaceholder').style.display='flex';">
                 <div class="panel-brand" style="font-size: 2.5rem; letter-spacing: 5px;">HUWAM</div>
                 <p class="panel-sub">Access your institutional borrowing account.</p>
                 <a href="login.php" class="panel-btn">LOG IN</a>

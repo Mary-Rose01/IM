@@ -50,6 +50,7 @@ CREATE TABLE IF NOT EXISTS tblitem (
     Item_Name VARCHAR(150) NOT NULL,
     Description TEXT NULL,
     Category VARCHAR(50) NULL,
+    Image VARCHAR(255) NULL,
     Status ENUM('Good','Damaged','Under Repair','Lost') DEFAULT 'Good',
     Availability_Status ENUM('Available','Borrowed','Reserved','Archived') DEFAULT 'Available',
     OwnerUserID INT NOT NULL,
@@ -139,4 +140,15 @@ VALUES (
     'admin',
     '$2y$10$92IXUNpkjO0rOQ5byMi.Ye4oKoEa3Ro9llC/.og/at2.uheWG/igi', -- password: password
     'admin'
+);
+
+-- Notification table
+CREATE TABLE IF NOT EXISTS tblnotification (
+    NotifID INT AUTO_INCREMENT PRIMARY KEY,
+    UserID INT NOT NULL,
+    Message VARCHAR(500) NOT NULL,
+    Link VARCHAR(255) NULL,
+    is_read TINYINT(1) DEFAULT 0,
+    CreatedAt DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (UserID) REFERENCES tbluser(UserID) ON DELETE CASCADE
 );
