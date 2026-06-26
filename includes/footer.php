@@ -1,14 +1,4 @@
-
 <script>
-// Generic confirm-delete
-document.querySelectorAll('.confirm-delete').forEach(btn => {
-    btn.addEventListener('click', function(e) {
-        if (!confirm('Are you sure you want to delete this record? This action cannot be undone.')) {
-            e.preventDefault();
-        }
-    });
-});
-
 // Auto-dismiss alerts
 setTimeout(() => {
     document.querySelectorAll('.alert.auto-dismiss').forEach(a => {
